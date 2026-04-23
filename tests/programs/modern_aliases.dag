@@ -1,0 +1,13 @@
+@type Point [
+  x :: int
+  y :: int
+]
+
+@fn sum_point [~ p :: Point] => int [
+  p.x -> add(p.y)
+]
+
+~ p :: Point = [ x = 4, y = 7 ]
+p -> sum_point -> block [~ value] [
+  value -> out.writeln
+]

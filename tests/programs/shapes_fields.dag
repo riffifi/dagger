@@ -1,4 +1,4 @@
-@shape Point [
+@type Point [
   x :: float
   y :: float
 ]

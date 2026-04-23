@@ -1,9 +1,9 @@
-@shape Point [
+@type Point [
   x :: int
   y :: int
 ]
 
-@shape WindowState [
+@type WindowState [
   pos :: Point
   title :: text
 ]

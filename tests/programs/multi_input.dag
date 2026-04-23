@@ -1,4 +1,4 @@
-@gate add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
+@fn add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
   b -> mul(factor) -> add(a)
 ]
 

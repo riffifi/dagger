@@ -1,4 +1,4 @@
-@gate factorial [~ n :: int] => int [
+@fn factorial [~ n :: int] => int [
   n -> fork [
     ?<= 1 -> 1
     _ -> n -> sub(1) -> factorial -> mul(n)

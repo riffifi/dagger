@@ -28,7 +28,7 @@ void testIntegerLiteralParsing() {
 
 void testMultiInputGate() {
     const char* source = R"dag(
-@gate add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
+@fn add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
   b -> mul(factor) -> add(a)
 ]
 
@@ -52,7 +52,7 @@ result -> out.writeln
 
 void testRecursiveFork() {
     const char* source = R"dag(
-@gate factorial [~ n :: int] => int [
+@fn factorial [~ n :: int] => int [
   n -> fork [
     ?<= 1 -> 1
     _ -> n -> sub(1) -> factorial -> mul(n)
@@ -68,7 +68,7 @@ void testRecursiveFork() {
 
 void testShapesAndFieldAccess() {
     const char* source = R"dag(
-@shape Point [
+@type Point [
   x :: float
   y :: float
 ]
@@ -83,16 +83,16 @@ p.x -> out.writeln
 
 void testNestedObjectAccessThroughGate() {
     const char* source = R"dag(
-@shape Point [
+@type Point [
   x :: int
   y :: int
 ]
 
-@shape Rect [
+@type Rect [
   origin :: Point
 ]
 
-@gate left [~ rect :: Rect] => int [
+@fn left [~ rect :: Rect] => int [
   rect.origin.x
 ]
 
@@ -102,6 +102,44 @@ rect -> left -> out.writeln
     auto result = dagger::runSource(source);
     require(result.ok, "nested object access through gate should run");
     require(result.stdoutText == "8\n", "nested object access through gate should print 8");
+}
+
+void testModernAliases() {
+    const char* source = R"dag(
+@type Point [
+  x :: int
+  y :: int
+]
+
+@fn twice [~ p :: Point] => int [
+  p.x -> mul(2)
+]
+
+~ p :: Point = [ x = 9, y = 1 ]
+p -> twice -> block [~ value] [
+  value -> out.writeln
+]
+)dag";
+    auto result = dagger::runSource(source);
+    require(result.ok, "modern aliases should run");
+    require(result.stdoutText == "18\n", "modern aliases should print 18");
+}
+
+void testLoopExecution() {
+    const char* source = R"dag(
+~ i :: int = 0
+~ total :: int = 0
+
+loop [i -> lt(5)] block [
+  total -> add(i) -> total
+  i -> add(1) -> i
+]
+
+total -> out.writeln
+)dag";
+    auto result = dagger::runSource(source);
+    require(result.ok, "loop should run");
+    require(result.stdoutText == "10\n", "loop should print 10");
 }
 
 } // namespace
@@ -114,6 +152,8 @@ int main() {
         testRecursiveFork();
         testShapesAndFieldAccess();
         testNestedObjectAccessThroughGate();
+        testModernAliases();
+        testLoopExecution();
     } catch (const std::exception& ex) {
         std::cerr << "cpp_tests failed: " << ex.what() << "\n";
         return EXIT_FAILURE;

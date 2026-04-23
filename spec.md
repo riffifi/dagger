@@ -12,17 +12,17 @@
 2. [Design Philosophy](#2-design-philosophy)
 3. [Lexical Structure](#3-lexical-structure)
 4. [Core Concepts](#4-core-concepts)
-5. [Streams](#5-streams)
-6. [Shapes (Type System)](#6-shapes-type-system)
-7. [Gates (Functions)](#7-gates-functions)
+5. [Variables and Values](#5-variables-and-values)
+6. [Types](#6-types)
+7. [Functions](#7-functions)
 8. [Routing Operator](#8-routing-operator)
 9. [Control Flow](#9-control-flow)
 10. [Memory Model](#10-memory-model)
-11. [Fields (Scope)](#11-fields-scope)
-12. [Built-in Gates](#12-built-in-gates)
+11. [Blocks (Scope)](#11-blocks-scope)
+12. [Built-in Functions](#12-built-in-functions)
 13. [Error Handling](#13-error-handling)
 14. [Modules](#14-modules)
-15. [Compile-time Gates (Macros)](#15-compile-time-gates-macros)
+15. [Compile-time Functions (Macros)](#15-compile-time-functions-macros)
 16. [Assembly Mapping](#16-assembly-mapping)
 17. [Grammar (EBNF)](#17-grammar-ebnf)
 18. [Standard Library](#18-standard-library)
@@ -35,9 +35,14 @@
 
 Dagger is a systems programming language that compiles directly to x86-64 assembly with no runtime, no garbage collector, and no hidden cost. It is designed to make the flow of data through a program explicit, readable, and honest about what the hardware is actually doing.
 
-Where most languages model programs as collections of objects or sequences of instructions, Dagger models programs as **networks of streams routed through gates**. Data flows. Gates transform it. Fields contain it. This is not a metaphor — it maps directly to how registers, ALU operations, and the call stack work at the silicon level.
+Where most languages model programs as collections of objects or sequences of instructions, Dagger models programs as **values routed through functions inside explicit blocks**. Data flows. Functions transform it. Blocks contain it. This is not a metaphor — it maps directly to how registers, ALU operations, and the call stack work at the silicon level.
 
 Dagger is not a high-level language with an assembly backend. It is an assembly language with a humane syntax.
+
+Terminology note:
+- This spec now prefers conventional terms in prose: `function`, `block`, and `type`
+- The preferred spellings are `@fn`, `block`, and `@type`
+- `loop` is the standard loop keyword; the older `pulse` name is removed from this spec
 
 ### Goals
 
@@ -62,7 +67,7 @@ Dagger is not a high-level language with an assembly backend. It is an assembly 
 
 ### 2.1 Data Has Direction
 
-In Dagger, data always moves in one direction: left to right through the `->` operator. You never call a function — you route a stream through a gate. This isn't just aesthetic. It forces the programmer to think about what data is entering a transform and what shape it has when it exits.
+In Dagger, data always moves in one direction: left to right through the `->` operator. You do not hide control flow behind implicit dispatch; you route a value through an explicit function. This isn't just aesthetic. It forces the programmer to think about what data is entering a transform and what type it has when it exits.
 
 ```dagger
 ~ score :: int = 72
@@ -71,21 +76,21 @@ score -> validate -> rank -> out.write
 
 This reads exactly like what the CPU does: load score, pass it to validate, pass the result to rank, write the final output.
 
-### 2.2 Streams, Not Variables
+### 2.2 Values and Variables
 
-Classical variables are locations. Dagger streams are flows. A stream has a shape (its data contract), a lifetime (when it exists), and a consumption model (probe vs burst). This distinction matters because reading a value and consuming it are different assembly operations — Dagger makes you say which you mean.
+Classical variables are locations. In Dagger, values move through explicit operations. A value has a type, a lifetime, and a consumption model (probe vs burst). This distinction matters because reading a value and consuming it are different assembly operations — Dagger makes you say which you mean.
 
-### 2.3 Spatial Scope
+### 2.3 Explicit Scope
 
-Scope in Dagger is physical. `[ ]` brackets define a field — a spatial region where streams exist. When execution leaves a field, everything declared inside it is freed. This maps directly to stack frame entry and exit. There is no garbage collector because there is no garbage — everything has a declared home.
+Scope in Dagger is physical. `[ ]` brackets define a block — a spatial region where values exist. When execution leaves a block, everything declared inside it is freed. This maps directly to stack frame entry and exit. There is no garbage collector because there is no garbage — everything has a declared home.
 
-### 2.4 Shape Inference Over Type Declarations
+### 2.4 Type Inference Over Type Declarations
 
-Dagger does not have a type system in the traditional sense. It has **shapes** — behavioral contracts that describe what a stream looks like and how it can be routed. Shapes are inferred from usage wherever possible. You annotate when you want to be explicit or when the compiler cannot infer.
+Dagger does not require explicit type declarations everywhere. It uses **types** that describe what a value looks like and how it can be routed. Types are inferred from usage wherever possible. You annotate when you want to be explicit or when the compiler cannot infer.
 
 ### 2.5 Explicit Is Better Than Magic
 
-If memory is allocated, you can see it. If a copy happens, you caused it. If something is freed, you wrote `@burst` or exited a field. There are no implicit operations in Dagger. Every assembly instruction has a visible reason in the source.
+If memory is allocated, you can see it. If a copy happens, you caused it. If something is freed, you wrote `@burst` or exited a block. There are no implicit operations in Dagger. Every assembly instruction has a visible reason in the source.
 
 ---
 
@@ -101,7 +106,7 @@ There are no multi-line comments. Long explanations belong in documentation, not
 
 ### 3.2 Whitespace
 
-Whitespace is not significant for parsing (Dagger is not indentation-sensitive) but convention is two-space indentation inside fields. Newlines separate statements. Multiple statements on one line are separated by `;`.
+Whitespace is not significant for parsing (Dagger is not indentation-sensitive) but convention is two-space indentation inside blocks. Newlines separate statements. Multiple statements on one line are separated by `;`.
 
 ### 3.3 Identifiers
 
@@ -147,8 +152,8 @@ null
 | Operator | Meaning |
 |----------|---------|
 | `->` | Route (data flows right) |
-| `=>` | Output shape declaration (gate signatures only) |
-| `::` | Shape bind |
+| `=>` | Function result type declaration |
+| `::` | Type bind |
 | `=` | Stream initialisation |
 | `?` | Probe (non-consuming read) |
 | `!` | Burst (consuming read, immediate free) |
@@ -164,8 +169,8 @@ null
 ### 3.6 Keywords
 
 ```
-~ @gate @burst @pin @static @extern @inline @comptime
-loop fork field null true false
+~ @fn @type @burst @pin @static @extern @inline @comptime
+loop fork block null true false
 ```
 
 ---
@@ -179,8 +184,8 @@ Everything in Dagger is built from three primitives:
 | Primitive | Symbol | What it is |
 |-----------|--------|-----------|
 | Stream | `~` | A named, shaped flow of data |
-| Gate | `@gate` | A named transform that accepts and emits streams |
-| Field | `[ ]` | A spatial scope that owns streams |
+| Function | `@fn` | A named transform that accepts and emits values |
+| Block | `[ ]` | A spatial scope that owns values |
 
 ### 4.2 The Routing Operator
 
@@ -192,7 +197,7 @@ source -> transform -> sink
 
 ### 4.3 Execution Model
 
-A `.dag` file's top-level statements form the entry stream. There is no `main()` function. The file is the program. Execution starts at the first statement and follows routing operators forward.
+A `.dag` file's top-level statements form the program entry. There is no `main()` function. The file is the program. Execution starts at the first statement and follows routing operators forward.
 
 ```dagger
 # this is a complete, valid Dagger program
@@ -201,14 +206,14 @@ A `.dag` file's top-level statements form the entry stream. There is no `main()`
 
 ---
 
-## 5. Streams
+## 5. Variables and Values
 
 ### 5.1 Declaration
 
 ```dagger
-~ name :: shape = value
-~ name :: shape          # uninitialized (must be written before probed)
-~ name = value           # shape inferred
+~ name :: type = value
+~ name :: type          # uninitialized (must be written before probed)
+~ name = value          # type inferred
 ```
 
 ### 5.2 Probe vs Burst
@@ -222,11 +227,11 @@ A `.dag` file's top-level statements form the entry stream. There is no `main()`
 
 Probing a stream does not advance or consume it. Bursting a stream consumes it — after a burst, the stream is gone and any subsequent access is a compile error.
 
-### 5.3 Stream Assignment (Re-routing)
+### 5.3 Variable Reassignment By Routing
 
 ```dagger
 ~ x :: int = 5
-x -> add(1) -> x    # route x through add gate, result back into x
+x -> add(1) -> x    # route x through a function, result back into x
 ```
 
 Re-routing into the same stream is an in-place update. The compiler emits a single register operation.
@@ -255,13 +260,13 @@ Stored in the `.data` or `.rodata` section. Exists for the lifetime of the progr
 
 ---
 
-## 6. Shapes (Type System)
+## 6. Types
 
-Shapes describe the contract of a stream — what it looks like in memory and what gates it can be routed into. Shapes are inferred wherever possible.
+Types describe the contract of a value — what it looks like in memory and what functions it can be routed into. Types are inferred wherever possible.
 
-### 6.1 Primitive Shapes
+### 6.1 Primitive Types
 
-| Shape | Size | Description |
+| Type | Size | Description |
 |-------|------|-------------|
 | `int` | 64-bit | Signed integer (default) |
 | `int8` `int16` `int32` `int64` | explicit | Sized signed integers |
@@ -274,7 +279,7 @@ Shapes describe the contract of a stream — what it looks like in memory and wh
 | `char` | 32-bit | Unicode code point |
 | `null` | 0 bytes | Absence of value |
 
-### 6.2 Composite Shapes
+### 6.2 Composite Types
 
 #### Block (fixed-size buffer)
 ```dagger
@@ -287,9 +292,9 @@ Shapes describe the contract of a stream — what it looks like in memory and wh
 ~ items :: slice[int]      # dynamic-length sequence of ints
 ```
 
-#### Struct shape
+#### Struct type
 ```dagger
-@shape Point [
+@type Point [
     x :: float
     y :: float
 ]
@@ -298,73 +303,73 @@ Shapes describe the contract of a stream — what it looks like in memory and wh
 p.x -> out.write
 ```
 
-#### Union shape
+#### Union type
 ```dagger
-@shape Num [
+@type Num [
     | int
     | float
 ]
 ```
 
-#### Gate shape (first-class gates)
+#### Function type
 ```dagger
-~ transform :: gate(int -> int)
+~ transform :: fn(int -> int)
 ```
 
-#### Optional shape
+#### Optional type
 ```dagger
 ~ maybe :: int?            # int or null
 ```
 
-#### Error shape
+#### Error type
 ```dagger
 ~ result :: int!err        # int or an error — see section 13
 ```
 
-### 6.3 Shape Inference
+### 6.3 Type Inference
 
-The compiler infers shapes from:
+The compiler infers types from:
 - Literal values (`42` infers `int`, `3.14` infers `float`, `"x"` infers `text`)
-- Gate output shapes
+- Function output types
 - Routing chain context
 
 When inference is ambiguous, the compiler emits a descriptive error asking for an explicit annotation.
 
-### 6.4 Shape Casting
+### 6.4 Type Casting
 
 ```dagger
 ~ x :: int = 65
-x -> cast(char) -> out.write    # routes x through cast gate, output shape is char
+x -> cast(char) -> out.write    # routes x through cast, output type is char
 ```
 
-Casts are explicit gate calls, never implicit. Narrowing casts that could lose data require `cast.unsafe`.
+Casts are explicit function calls, never implicit. Narrowing casts that could lose data require `cast.unsafe`.
 
 ---
 
-## 7. Gates
+## 7. Functions
 
-Gates are the transformation units of Dagger. A gate accepts one or more input streams, transforms them, and emits an output stream. Gates do not "execute" — data is *routed through* them.
+Functions are the transformation units of Dagger. A function accepts one or more input values, transforms them, and emits an output value. Functions do not "execute" in isolation — data is *routed through* them.
 
-### 7.1 Gate Declaration
+### 7.1 Function Declaration
 
 ```dagger
-@gate name [inputs] => output_shape [
+@fn name [inputs] => output_type [
     # body: last expression is the output
 ]
 ```
 
 ```dagger
-@gate double [~ n :: int] => int [
+@fn double [~ n :: int] => int [
     n -> mul(2)
 ]
 ```
 
-The body of a gate is a field. The last routed value in the field is the gate's output. No `return` keyword.
+The body of a function is a block. The last routed value in the block is the function's output. No `return` keyword.
 
 ### 7.2 Multiple Inputs
 
 ```dagger
-@gate add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
+@fn add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
     b -> mul(factor) -> add(a)
 ]
 
@@ -374,7 +379,7 @@ The body of a gate is a field. The last routed value in the field is the gate's 
 ### 7.3 Multiple Outputs
 
 ```dagger
-@gate minmax [~ a :: int, ~ b :: int] => [int, int] [
+@fn minmax [~ a :: int, ~ b :: int] => [int, int] [
     a -> min(b),
     a -> max(b)
 ]
@@ -382,10 +387,10 @@ The body of a gate is a field. The last routed value in the field is the gate's 
 ~ lo, hi = 5, 9 -> minmax
 ```
 
-### 7.4 Recursive Gates
+### 7.4 Recursive Functions
 
 ```dagger
-@gate factorial [~ n :: int] => int [
+@fn factorial [~ n :: int] => int [
     n -> fork [
         ?<= 1  -> 1
         _      -> n -> sub(1) -> factorial -> mul(n)
@@ -393,34 +398,34 @@ The body of a gate is a field. The last routed value in the field is the gate's 
 ]
 ```
 
-### 7.5 Inline Gates
+### 7.5 Inline Functions
 
 ```dagger
-@inline @gate square [~ n :: int] => int [
+@inline @fn square [~ n :: int] => int [
     n -> mul(n)
 ]
 ```
 
-`@inline` instructs the compiler to inline the gate body at every call site. No `call` instruction is emitted.
+`@inline` instructs the compiler to inline the function body at every call site. No `call` instruction is emitted.
 
-### 7.6 First-class Gates
+### 7.6 First-class Functions
 
-Gates are streams. They can be stored, passed, and routed.
+Functions are values. They can be stored, passed, and routed.
 
 ```dagger
-~ op :: gate(int -> int) = double
+~ op :: fn(int -> int) = double
 
 5 -> op -> out.write    # outputs 10
 ```
 
-### 7.7 Gate Composition
+### 7.7 Function Composition
 
 ```dagger
 ~ pipeline = double >> square    # compose: double then square
 5 -> pipeline -> out.write       # outputs 100
 ```
 
-`>>` composes two gates into one. The output shape of the left gate must match the input shape of the right gate.
+`>>` composes two functions into one. The output type of the left function must match the input type of the right function.
 
 ### 7.8 Partial Application
 
@@ -436,53 +441,53 @@ Gates are streams. They can be stored, passed, and routed.
 ### 8.1 Basic Routing
 
 ```dagger
-source -> gate
+source -> fn
 ```
 
 ### 8.2 Chained Routing
 
 ```dagger
-source -> gate_a -> gate_b -> gate_c
+source -> fn_a -> fn_b -> fn_c
 ```
 
-Left-associative. Each gate's output becomes the next gate's input.
+Left-associative. Each function's output becomes the next function's input.
 
 ### 8.3 Routing Into a Stream
 
 ```dagger
-source -> gate -> ~ result
+source -> fn -> ~ result
 # or into an existing stream:
-source -> gate -> result
+source -> fn -> result
 ```
 
-### 8.4 Routing Into a Field
+### 8.4 Routing Into a Block
 
 ```dagger
-source -> [
-    # source is available here as the field's input stream
-    # last expression exits the field as output
+source -> block [
+    # source is available here as the block's input value
+    # last expression exits the block as output
 ]
 ```
 
 ### 8.5 Routing Multiple Streams
 
 ```dagger
-a, b -> gate_that_takes_two
+a, b -> fn_that_takes_two
 ```
 
 ### 8.6 Discarding Output
 
 ```dagger
-source -> gate -> _    # route to wildcard: output discarded
+source -> fn -> _    # route to wildcard: output discarded
 ```
 
 ### 8.7 Tee Routing (split without consuming)
 
 ```dagger
-source -> tee(log.write) -> next_gate
+source -> tee(log.write) -> next_fn
 ```
 
-`tee` probes the stream, routes a copy to its argument gate, and passes the original forward unchanged.
+`tee` probes the value, routes a copy to its argument function, and passes the original forward unchanged.
 
 ---
 
@@ -510,7 +515,7 @@ x -> fork [
 ]
 ```
 
-Fork with output (all arms must emit the same shape):
+Fork with output (all arms must emit the same type):
 ```dagger
 ~ label = x -> fork [
     ?>= 90  -> "excellent"
@@ -521,10 +526,10 @@ Fork with output (all arms must emit the same shape):
 
 ### 9.2 Loop
 
-`loop` repeats its body field while its condition field evaluates to `true`.
+`loop` repeats its body block while its condition expression evaluates to `true`.
 
 ```dagger
-loop [condition] [
+loop [condition] block [
     # body
 ]
 ```
@@ -532,17 +537,17 @@ loop [condition] [
 ```dagger
 ~ i :: int = 0
 
-loop [?i < 10] [
+loop [i -> lt(10)] block [
     i -> out.write
     i -> add(1) -> i
 ]
 ```
 
-The condition field is probed (non-consuming) on each iteration. The body field is a full field — streams declared inside are freed on each iteration.
+The condition is evaluated on each iteration. The body is a full block — values declared inside are freed on each iteration.
 
 Loop with index:
 ```dagger
-loop.range(0, 10) -> [~ i] [
+loop.range(0, 10) -> block [~ i] [
     i -> out.write
 ]
 ```
@@ -563,10 +568,10 @@ nums -> each -> [~ n] [
 
 ### 9.4 Break and Skip
 
-Inside a `loop` or `each` field:
+Inside a `loop` or `each` block:
 
 ```dagger
-loop [?i < 100] [
+loop [i -> lt(100)] block [
     i -> fork [
         ?= 50  -> @break
         _      -> i -> out.write
@@ -593,14 +598,14 @@ Dagger has no garbage collector and no implicit allocation. All memory is either
 
 ### 10.1 Stack Allocation
 
-All streams declared in a field live on the stack by default. They are freed when the field exits.
+All values declared in a block live on the stack by default. They are freed when the block exits.
 
 ```dagger
 ~ x :: int = 42           # stack allocated, 8 bytes
 ~ buf :: block[128]       # stack allocated, 128 bytes
 ```
 
-The compiler tracks stack frame size at compile time and emits a single `sub rsp, N` on field entry.
+The compiler tracks stack frame size at compile time and emits a single `sub rsp, N` on block entry.
 
 ### 10.2 Heap Allocation
 
@@ -609,7 +614,7 @@ The compiler tracks stack frame size at compile time and emits a single `sub rsp
 ~ arr :: slice[int] @heap     # heap-allocated slice
 ```
 
-Heap streams must be explicitly freed with `@burst` or they will be freed on scope exit if inside a `field` block. The compiler warns on unfreed heap streams at the end of their declaring scope.
+Heap values must be explicitly freed with `@burst` or they will be freed on scope exit if inside a `block`. The compiler warns on unfreed heap values at the end of their declaring scope.
 
 ### 10.3 Explicit Free
 
@@ -624,7 +629,7 @@ After `@burst`, the stream is gone. Any use after burst is a compile error.
 | Use stack when | Use heap when |
 |----------------|---------------|
 | Size is known at compile time | Size is determined at runtime |
-| Lifetime matches the current field | Lifetime outlasts the current field |
+| Lifetime matches the current block | Lifetime outlasts the current block |
 | Size is small (< a few KB) | Size is large |
 
 ### 10.5 Copies and Moves
@@ -642,7 +647,7 @@ Copies of primitive shapes are always cheap (single register move). Copies of bl
 
 ```dagger
 ~ x :: int = 10
-~ ref = &x           # ref holds the address of x, shape: &int
+~ ref = &x           # ref holds the address of x, type: &int
 
 ref -> deref         # dereference: reads value at ref's address
 *ref -> out.write    # shorthand dereference
@@ -661,59 +666,59 @@ A slice is a `(pointer, length)` pair. It does not own its memory — it describ
 
 ---
 
-## 11. Fields (Scope)
+## 11. Blocks (Scope)
 
-### 11.1 Basic Field
+### 11.1 Basic Block
 
 ```dagger
-field [
+block [
     ~ x :: int = 5
     x -> out.write
 ]
 # x is freed here
 ```
 
-### 11.2 Fields as Expressions
+### 11.2 Blocks as Expressions
 
-A field can produce an output value — the last routed expression in the field is its result:
+A block can produce an output value — the last routed expression in the block is its result:
 
 ```dagger
-~ result = field [
+~ result = block [
     ~ a = 3
     ~ b = 4
-    a -> add(b)    # this is the field's output
+    a -> add(b)    # this is the block's output
 ]
 result -> out.write    # outputs 7
 ```
 
-### 11.3 Named Fields
+### 11.3 Named Blocks
 
-Fields can be named for clarity (name has no semantic effect, only documentary):
+Blocks can be named for clarity (name has no semantic effect, only documentary):
 
 ```dagger
-field.setup [
+block.setup [
     # initialization
 ]
 
-field.main [
+block.main [
     # program body
 ]
 ```
 
-### 11.4 Field Inputs
+### 11.4 Block Inputs
 
 ```dagger
 ~ x = 10
-x -> field [~ n] [
+x -> block [~ n] [
     n -> mul(2) -> out.write
 ]
 ```
 
-The routed value enters the field as the named stream `n`.
+The routed value enters the block as the named value `n`.
 
 ---
 
-## 12. Built-in Gates
+## 12. Built-in Functions
 
 ### 12.1 Arithmetic
 
@@ -811,11 +816,11 @@ The routed value enters the field as the named stream `n`.
 
 | Gate | Notes |
 |------|-------|
-| `cast(shape)` | safe shape cast |
-| `cast.unsafe(shape)` | unsafe reinterpret cast |
-| `tee(gate)` | probe + side-route, pass through |
-| `tap(gate)` | alias for tee |
-| `id` | identity gate — passes input through unchanged |
+| `cast(type)` | safe type cast |
+| `cast.unsafe(type)` | unsafe reinterpret cast |
+| `tee(fn)` | probe + side-route, pass through |
+| `tap(fn)` | alias for tee |
+| `id` | identity function — passes input through unchanged |
 | `const(v)` | discards input, emits constant v |
 | `assert(cond)` | halts with diagnostic if condition fails |
 | `unreachable` | marks a path as impossible; if reached, halts |
@@ -824,20 +829,20 @@ The routed value enters the field as the named stream `n`.
 
 ## 13. Error Handling
 
-Dagger has no exceptions. Errors are shapes — a gate that can fail returns an error shape, and the caller must route it explicitly.
+Dagger has no exceptions. Errors are types — a function that can fail returns an error type, and the caller must handle it explicitly.
 
-### 13.1 Error Shape
+### 13.1 Error Type
 
 ```dagger
 ~ result :: int!err    # either an int or an error
 ```
 
-The `!err` suffix marks a stream as potentially an error.
+The `!err` suffix marks a value as potentially an error.
 
 ### 13.2 Producing Errors
 
 ```dagger
-@gate divide [~ a :: int, ~ b :: int] => int!err [
+@fn divide [~ a :: int, ~ b :: int] => int!err [
     b -> fork [
         ?= 0  -> @error("division by zero")
         _     -> a -> div(b)
@@ -863,20 +868,20 @@ val -> fork [
 ### 13.4 Propagating Errors
 
 ```dagger
-@gate safe_sqrt [~ n :: float] => float!err [
+@fn safe_sqrt [~ n :: float] => float!err [
     n -> fork [
         ?< 0.0  -> @error("negative input")
         _       -> n -> math.sqrt
     ]
 ]
 
-@gate compute [~ x :: float] => float!err [
+@fn compute [~ x :: float] => float!err [
     x -> safe_sqrt -> @bubble    # @bubble propagates error upward if present
     # if safe_sqrt succeeds, routing continues here
 ]
 ```
 
-`@bubble` short-circuits: if the stream is an error, it exits the current gate with that error. If it is `@ok`, routing continues with the unwrapped value.
+`@bubble` short-circuits: if the value is an error, it exits the current function with that error. If it is `@ok`, routing continues with the unwrapped value.
 
 ### 13.5 Default on Error
 
@@ -908,7 +913,7 @@ src/
 5 -> math.double -> io.out.write
 ```
 
-`@use` makes the module's exported gates and streams available under its name.
+`@use` makes the module's exported functions and values available under its name.
 
 ### 14.3 Selective Import
 
@@ -920,14 +925,14 @@ src/
 
 ### 14.4 Exporting
 
-By default, all top-level gates and `@static` streams are exported. Prefix with `@private` to hide from importers:
+By default, all top-level functions and `@static` values are exported. Prefix with `@private` to hide from importers:
 
 ```dagger
-@private @gate helper [~ n :: int] => int [
+@private @fn helper [~ n :: int] => int [
     n -> mul(3)
 ]
 
-@gate triple [~ n :: int] => int [
+@fn triple [~ n :: int] => int [
     n -> helper
 ]
 ```
@@ -935,34 +940,34 @@ By default, all top-level gates and `@static` streams are exported. Prefix with 
 ### 14.5 External (C ABI)
 
 ```dagger
-@extern @gate printf [~ fmt :: &byte, ...] => int
-@extern @gate malloc [~ size :: uint] => &byte
+@extern @fn printf [~ fmt :: &byte, ...] => int
+@extern @fn malloc [~ size :: uint] => &byte
 ```
 
-`@extern` declares a gate with C calling convention. Dagger will emit the correct `call` instruction and handle ABI-compliant argument passing.
+`@extern` declares a function with C calling convention. Dagger will emit the correct `call` instruction and handle ABI-compliant argument passing.
 
 ---
 
-## 15. Compile-time Gates (Macros)
+## 15. Compile-time Functions (Macros)
 
-`@comptime` gates run entirely at compile time. Their output is substituted inline as a constant. They have access to shape information and literal values only — no runtime state.
+`@comptime` functions run entirely at compile time. Their output is substituted inline as a constant. They have access to type information and literal values only — no runtime state.
 
 ```dagger
-@comptime @gate kilobytes [~ n :: int] => int [
+@comptime @fn kilobytes [~ n :: int] => int [
     n -> mul(1024)
 ]
 
 ~ buf :: block[@kilobytes(4)]    # compiles to block[4096]
 ```
 
-Comptime gates are used for:
+Compile-time functions are used for:
 - Constant folding
 - Computed buffer sizes
 - Conditional compilation
-- Code generation over shapes
+- Code generation over types
 
 ```dagger
-@comptime @gate is_64bit => bool [
+@comptime @fn is_64bit => bool [
     @arch -> eq("x86_64")
 ]
 ```
@@ -994,7 +999,7 @@ add rax, [b]
 mov [c], rax
 ```
 
-### 16.3 Gate Call
+### 16.3 Function Call
 
 ```dagger
 x -> double
@@ -1025,7 +1030,7 @@ jmp .neg
 .end:
 ```
 
-### 16.5 loop (Loop)
+### 16.5 Loop
 
 ```dagger
 loop [?i < 10] [body]
@@ -1040,10 +1045,10 @@ loop [?i < 10] [body]
 .loop_end:
 ```
 
-### 16.6 Field Entry/Exit
+### 16.6 Block Entry/Exit
 
 ```dagger
-field [
+block [
     ~ x :: int = 5
     ~ buf :: block[64]
 ]
@@ -1071,7 +1076,7 @@ call free
 @syscall write [~ fd :: int, ~ buf :: &byte, ~ len :: uint] => int
 ```
 
-Syscall gates emit direct `syscall` instructions with the correct register setup per the Linux x86-64 ABI (rax=syscall number, rdi, rsi, rdx, r10, r8, r9 for args).
+Syscall functions emit direct `syscall` instructions with the correct register setup per the Linux x86-64 ABI (rax=syscall number, rdi, rsi, rdx, r10, r8, r9 for args).
 
 ---
 
@@ -1082,26 +1087,26 @@ program         ::= statement*
 
 statement       ::= stream_decl
                   | route_stmt
-                  | gate_decl
-                  | shape_decl
+                  | function_decl
+                  | type_decl
                   | directive
-                  | field_stmt
+                  | block_stmt
 
-stream_decl     ::= "~" identifier ("::" shape)? ("=" expression)?
-                  | "~" identifier ("," identifier)* ("::" shape)? "=" expression ("," expression)*
+stream_decl     ::= "~" identifier ("::" type)? ("=" expression)?
+                  | "~" identifier ("," identifier)* ("::" type)? "=" expression ("," expression)*
 
 route_stmt      ::= expression ("->" expression)+
 
-gate_decl       ::= annotation* "@gate" identifier "[" param_list? "]" ("=>" shape)? "[" statement* "]"
+function_decl   ::= annotation* "@fn" identifier "[" param_list? "]" ("=>" type)? "block" "[" statement* "]"
 
-shape_decl      ::= "@shape" identifier "[" field_list "]"
+type_decl       ::= "@type" identifier "[" field_list "]"
 
 annotation      ::= "@" identifier
 
 param_list      ::= param ("," param)*
-param           ::= "~" identifier "::" shape
+param           ::= "~" identifier "::" type
 
-field_list      ::= (identifier "::" shape newline)*
+field_list      ::= (identifier "::" type newline)*
 
 expression      ::= literal
                   | identifier
@@ -1111,15 +1116,15 @@ expression      ::= literal
                   | "*" identifier
                   | expression "->" expression
                   | expression ">>" expression
-                  | gate_call
-                  | field_expr
+                  | function_call
+                  | block_expr
                   | fork_expr
                   | loop_expr
                   | "[" expression_list "]"
 
-gate_call       ::= identifier "(" arg_list? ")"
+function_call   ::= identifier "(" arg_list? ")"
 
-field_expr      ::= "field" ("[" param_list "]")? "[" statement* "]"
+block_expr      ::= "block" ("[" param_list "]")? "[" statement* "]"
 
 fork_expr       ::= "fork" "[" fork_arm+ "]"
 fork_arm        ::= (probe_cond | "_") "->" expression
@@ -1133,16 +1138,16 @@ loop_expr      ::= "loop" "[" expression "]" "[" statement* "]"
 
 comparison_op   ::= "=" | "!=" | ">" | "<" | ">=" | "<="
 
-shape           ::= primitive_shape
+type            ::= primitive_type
                   | "block" "[" integer "]"
-                  | "slice" "[" shape "]"
-                  | "gate" "(" shape "->" shape ")"
-                  | shape "?"
-                  | shape "!" identifier
-                  | "&" shape
+                  | "slice" "[" type "]"
+                  | "fn" "(" type "->" type ")"
+                  | type "?"
+                  | type "!" identifier
+                  | "&" type
                   | identifier
 
-primitive_shape ::= "int" | "int8" | "int16" | "int32" | "int64"
+primitive_type  ::= "int" | "int8" | "int16" | "int32" | "int64"
                   | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
                   | "float" | "float32"
                   | "bool" | "byte" | "text" | "char" | "null"
@@ -1150,7 +1155,7 @@ primitive_shape ::= "int" | "int8" | "int16" | "int32" | "int64"
 literal         ::= integer | float | string | char | "true" | "false" | "null"
 
 directive       ::= "@use" identifier ("[" identifier_list "]")?
-                  | "@extern" gate_decl
+                  | "@extern" function_decl
                   | "@static" stream_decl
                   | "@burst" identifier
                   | "@error" "(" string ")"
@@ -1166,7 +1171,7 @@ directive       ::= "@use" identifier ("[" identifier_list "]")?
 The Dagger standard library (`@use std`) is itself written in Dagger. There is no privileged runtime — `std` is just a collection of `.dag` files.
 
 ### 18.1 std.io
-I/O gates for files, stdin/stdout/stderr, formatting.
+I/O functions for files, stdin/stdout/stderr, formatting.
 
 ### 18.2 std.mem
 Memory allocation, arena allocators, pool allocators.
@@ -1180,7 +1185,7 @@ arena -> std.mem.arena.free                 # free entire arena at once
 ```
 
 ### 18.3 std.math
-Full math gate library including trig, log, random.
+Full math function library including trig, log, random.
 
 ### 18.4 std.text
 Text manipulation: parsing, formatting, searching, encoding.
@@ -1198,7 +1203,7 @@ list -> std.collections.list.len -> out.write
 Available collections: `list`, `map`, `set`, `queue`, `stack`, `ring`.
 
 ### 18.6 std.sys
-Direct system call gates. Platform-specific. Linux, macOS, Windows backends.
+Direct system call functions. Platform-specific. Linux, macOS, Windows backends.
 
 ```dagger
 @use std.sys
@@ -1207,7 +1212,7 @@ std.sys.exit(0)
 ```
 
 ### 18.7 std.fmt
-Formatting streams to text.
+Formatting values to text.
 
 ```dagger
 @use std.fmt
@@ -1225,15 +1230,15 @@ The Dagger compiler (`dagc`) transforms `.dag` source to a native binary in five
 Source text → token stream. Handles comments, literals, operators, identifiers.
 
 ### Stage 2: Parse
-Token stream → AST (Abstract Stream Tree). Validates grammar per section 17. Produces a tree of routing nodes, field nodes, gate nodes.
+Token stream → AST. Validates grammar per section 17. Produces a tree of routing nodes, block nodes, and function nodes.
 
-### Stage 3: Shape Resolution
-AST → shape-annotated AST. Infers shapes for all streams and gate outputs. Reports shape mismatches. Resolves gate overloading if present.
+### Stage 3: Type Resolution
+AST → type-annotated AST. Infers types for all values and function outputs. Reports type mismatches. Resolves overloading if present.
 
-### Stage 4: Stream Lowering
-Shape-annotated AST → Stream IR (SIR). SIR is a flat, SSA-like representation where:
-- All streams have explicit lifetimes
-- All field boundaries are explicit enter/exit ops
+### Stage 4: Value Lowering
+Type-annotated AST → lower-level IR. This IR is a flat, SSA-like representation where:
+- All values have explicit lifetimes
+- All block boundaries are explicit enter/exit ops
 - All routing chains are flattened to binary ops
 - @burst and lifetime-end points are inserted
 
@@ -1255,7 +1260,7 @@ dagc [flags] <source files>
 --no-stdlib       do not link standard library
 --emit-sir        dump Stream IR before register allocation
 --verbose         print stage timings
---check           type/shape check only, no output
+--check           type check only, no output
 ```
 
 ---
@@ -1285,7 +1290,7 @@ loop [?i <= 100] [
 ```dagger
 # fib.dag
 
-@gate fib [~ n :: int] => int [
+@fn fib [~ n :: int] => int [
     n -> fork [
         ?<= 1  -> n
         _      -> n -> sub(1) -> fib -> add(n -> sub(2) -> fib)
@@ -1322,16 +1327,16 @@ path -> file.open -> fork [
 ```dagger
 # vec2.dag
 
-@shape Vec2 [
+@type Vec2 [
     x :: float
     y :: float
 ]
 
-@gate vec2.add [~ a :: Vec2, ~ b :: Vec2] => Vec2 [
+@fn vec2.add [~ a :: Vec2, ~ b :: Vec2] => Vec2 [
     [ x = a.x -> add(b.x), y = a.y -> add(b.y) ]
 ]
 
-@gate vec2.length [~ v :: Vec2] => float [
+@fn vec2.length [~ v :: Vec2] => float [
     v.x -> mul(v.x) -> add(v.y -> mul(v.y)) -> math.sqrt
 ]
 
@@ -1364,30 +1369,30 @@ std.sys.exit(0)
 |---------|---------|
 | `~` | Declare a stream |
 | `->` | Route data |
-| `=>` | Declare gate output shape |
-| `::` | Bind shape to stream |
+| `=>` | Declare function output type |
+| `::` | Bind type to value |
 | `?` | Probe (non-consuming read) |
 | `!` | Burst (consuming read + free) |
 | `_` | Wildcard / discard |
-| `@gate` | Declare a gate |
-| `@shape` | Declare a shape |
+| `@fn` | Declare a function |
+| `@type` | Declare a type |
 | `@burst` | Explicitly free a stream |
 | `@static` | Static lifetime stream |
 | `@pin` | Register pin annotation |
-| `@inline` | Inline a gate at call sites |
-| `@extern` | External C ABI gate |
-| `@comptime` | Compile-time gate |
+| `@inline` | Inline a function at call sites |
+| `@extern` | External C ABI function |
+| `@comptime` | Compile-time function |
 | `@use` | Import a module |
 | `@private` | Hide from module exports |
 | `@error` | Produce an error value |
 | `@bubble` | Propagate error upward |
-| `@ok` / `@err` | Fork arms for error shapes |
+| `@ok` / `@err` | Fork arms for error types |
 | `@break` | Exit loop loop |
 | `@skip` | Advance to next iteration |
-| `@syscall` | Direct syscall gate |
-| `loop` | Loop gate |
-| `fork` | Branch gate |
-| `field` | Named scope block |
+| `@syscall` | Direct syscall function |
+| `loop` | Loop construct |
+| `fork` | Branch construct |
+| `block` | Named scope block |
 | `each` | Iterate a slice |
 | `tee` | Probe + side-route + pass-through |
 | `null` | Absence of value |

@@ -115,15 +115,15 @@ void Parser::consume(TokenKind kind, const char* message) {
 std::unique_ptr<Statement> Parser::parseStatement() {
     std::vector<std::string> annotations;
     while (check(TokenKind::Identifier) && !peek().text.empty() && peek().text[0] == '@' &&
-           peek().text != "@gate" && peek().text != "@shape") {
+           peek().text != "@gate" && peek().text != "@fn" && peek().text != "@shape" && peek().text != "@type") {
         annotations.push_back(advance().text);
     }
 
-    if (match(TokenKind::Identifier, "@gate")) {
+    if (match(TokenKind::Identifier, "@gate") || match(TokenKind::Identifier, "@fn")) {
         return parseGateDecl(std::move(annotations));
     }
 
-    if (match(TokenKind::Identifier, "@shape")) {
+    if (match(TokenKind::Identifier, "@shape") || match(TokenKind::Identifier, "@type")) {
         return parseShapeDecl();
     }
 
@@ -421,7 +421,8 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
         return std::make_unique<LiteralExpr>();
     }
 
-    if (match(TokenKind::Identifier, "field") || match(TokenKind::Keyword, "field")) {
+    if (match(TokenKind::Identifier, "field") || match(TokenKind::Keyword, "field") ||
+        match(TokenKind::Identifier, "block") || match(TokenKind::Keyword, "block")) {
         return parseFieldExpression();
     }
 

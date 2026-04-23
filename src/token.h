@@ -25,7 +25,8 @@ struct Token {
 };
 
 inline bool isKeyword(std::string_view text) {
-    return text == "true" || text == "false" || text == "null" || text == "loop" || text == "fork" || text == "field" || text == "loop.range";
+    return text == "true" || text == "false" || text == "null" || text == "loop" || text == "fork" ||
+           text == "field" || text == "block" || text == "loop.range";
 }
 
 } // namespace dagger
