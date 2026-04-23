@@ -1,0 +1,7 @@
+@shape Point [
+  x :: float
+  y :: float
+]
+
+~ p :: Point = [ x = 3.5, y = 9.25 ]
+p.y -> out.writeln

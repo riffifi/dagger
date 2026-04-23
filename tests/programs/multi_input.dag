@@ -1,0 +1,5 @@
+@gate add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
+  b -> mul(factor) -> add(a)
+]
+
+3, 4, 2 -> add_scaled -> out.writeln

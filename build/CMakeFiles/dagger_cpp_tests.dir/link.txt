@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/dagger_cpp_tests.dir/link.d CMakeFiles/dagger_cpp_tests.dir/tests/cpp_tests.cpp.o -o dagger_cpp_tests  libdagger_lib.a

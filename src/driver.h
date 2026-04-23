@@ -1,0 +1,25 @@
+#pragma once
+
+#include "parser.h"
+#include "runtime.h"
+#include "lexer.h"
+#include <memory>
+#include <string>
+#include <string_view>
+
+namespace dagger {
+
+struct RunResult {
+    bool ok = false;
+    Value lastValue;
+    std::string stdoutText;
+    std::string stderrText;
+    std::string errorMessage;
+};
+
+std::vector<Token> lexSource(std::string_view source);
+std::unique_ptr<Program> parseSource(std::string_view source);
+RunResult runSource(std::string_view source, Interpreter& interpreter, bool printResult = false);
+RunResult runSource(std::string_view source, bool printResult = false);
+
+} // namespace dagger

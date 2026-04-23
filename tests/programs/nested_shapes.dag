@@ -1,0 +1,13 @@
+@shape Point [
+  x :: int
+  y :: int
+]
+
+@shape WindowState [
+  pos :: Point
+  title :: text
+]
+
+~ state :: WindowState = [ pos = [ x = 640, y = 480 ], title = "editor" ]
+state.pos.x -> out.writeln
+state.title -> out.writeln

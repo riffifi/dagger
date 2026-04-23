@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/dagc.dir/link.d CMakeFiles/dagc.dir/src/main.cpp.o -o dagc  libdagger_lib.a
