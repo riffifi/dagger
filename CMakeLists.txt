@@ -10,9 +10,12 @@ add_library(dagger_lib
     src/lexer.cpp
     src/parser.cpp
     src/runtime.cpp
+    src/semantics.cpp
+    src/stdlib.cpp
 )
 
 target_include_directories(dagger_lib PUBLIC src)
+target_compile_definitions(dagger_lib PUBLIC DAGGER_STDLIB_DIR="${CMAKE_CURRENT_SOURCE_DIR}/stdlib")
 
 add_executable(dagc
     src/main.cpp
@@ -35,5 +38,6 @@ if(BUILD_TESTS)
         tests/dag_tests.cpp
     )
     target_link_libraries(dagger_dag_tests PRIVATE dagger_lib)
+    target_compile_definitions(dagger_dag_tests PRIVATE DAGGER_TEST_PROGRAMS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/programs")
     add_test(NAME dagger_dag_tests COMMAND dagger_dag_tests)
 endif()

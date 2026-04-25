@@ -43,13 +43,15 @@ struct Value {
 struct EvalContext {
     EvalContext* parent = nullptr;
     std::map<std::string, Value> variables;
+    std::map<std::string, std::optional<std::string>> variableTypes;
     std::map<std::string, GateDecl*> gates;
     std::map<std::string, ShapeDecl*> shapes;
 
     std::optional<Value> lookupVariable(std::string_view name) const;
+    std::optional<std::string> lookupVariableType(std::string_view name) const;
     GateDecl* lookupGate(std::string_view name) const;
     ShapeDecl* lookupShape(std::string_view name) const;
-    void defineVariable(std::string name, Value value);
+    void defineVariable(std::string name, Value value, std::optional<std::string> typeName = std::nullopt);
     bool assignVariable(std::string_view name, Value value);
     void defineGate(std::string name, GateDecl* gate);
     void defineShape(std::string name, ShapeDecl* shape);

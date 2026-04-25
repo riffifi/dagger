@@ -26,6 +26,7 @@ private:
     void consume(TokenKind kind, const char* message);
 
     std::unique_ptr<Statement> parseStatement();
+    std::unique_ptr<Statement> parseUseDecl();
     std::unique_ptr<Statement> parseStreamDecl(bool isStatic = false);
     std::unique_ptr<Statement> parseShapeDecl();
     std::unique_ptr<Statement> parseGateDecl(std::vector<std::string> annotations);

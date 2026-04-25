@@ -1,0 +1,3 @@
+@use std.math
+
+5 -> std.math.double -> std.math.square -> out.writeln

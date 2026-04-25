@@ -18,7 +18,7 @@ static std::string readFile(const fs::path& path) {
 
 int main() {
     try {
-        const fs::path root = fs::path(__FILE__).parent_path() / "programs";
+        const fs::path root = fs::path(DAGGER_TEST_PROGRAMS_DIR);
         size_t count = 0;
 
         for (const auto& entry : fs::directory_iterator(root)) {
@@ -28,9 +28,8 @@ int main() {
 
             const fs::path dagPath = entry.path();
             const fs::path outPath = dagPath.parent_path() / (dagPath.stem().string() + ".out");
-            const std::string source = readFile(dagPath);
             const std::string expected = readFile(outPath);
-            const auto result = dagger::runSource(source);
+            const auto result = dagger::runFile(dagPath);
 
             if (!result.ok) {
                 throw std::runtime_error(dagPath.filename().string() + " failed: " + result.errorMessage);

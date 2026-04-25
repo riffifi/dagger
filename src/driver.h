@@ -4,6 +4,7 @@
 #include "runtime.h"
 #include "lexer.h"
 #include <memory>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -19,7 +20,10 @@ struct RunResult {
 
 std::vector<Token> lexSource(std::string_view source);
 std::unique_ptr<Program> parseSource(std::string_view source);
+std::unique_ptr<Program> parseFile(const std::filesystem::path& path);
 RunResult runSource(std::string_view source, Interpreter& interpreter, bool printResult = false);
 RunResult runSource(std::string_view source, bool printResult = false);
+RunResult runFile(const std::filesystem::path& path, Interpreter& interpreter, bool printResult = false);
+RunResult runFile(const std::filesystem::path& path, bool printResult = false);
 
 } // namespace dagger

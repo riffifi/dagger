@@ -1,0 +1,7 @@
+@fn double [~ n :: int] => int [
+  n -> add(n)
+]
+
+@fn square [~ n :: int] => int [
+  n -> mul(n)
+]

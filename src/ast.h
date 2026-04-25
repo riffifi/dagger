@@ -71,6 +71,7 @@ struct RouteExpr : Expression {
 
 struct FieldExpr : Expression {
     std::optional<std::string> inputName;
+    std::optional<std::string> inputTypeName;
     std::vector<std::unique_ptr<Statement>> body;
 };
 
@@ -123,6 +124,11 @@ struct GateDecl : Statement {
 
 struct ExprStmt : Statement {
     std::unique_ptr<Expression> expression;
+};
+
+struct UseDecl : Statement {
+    std::string moduleName;
+    std::vector<std::string> importedNames;
 };
 
 } // namespace dagger

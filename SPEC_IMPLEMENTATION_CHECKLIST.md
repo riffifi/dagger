@@ -230,8 +230,8 @@ Notes:
 
 ## 12. Modules
 
-- [ ] File-as-module semantics
-- [ ] `@use module`
+- [x] File-as-module semantics
+- [x] `@use module`
 - [ ] Selective import
 - [ ] Export control
 - [ ] External C ABI declarations with `@extern`
@@ -296,7 +296,7 @@ Notes:
 - [x] `.dag` golden/integration tests
 - [ ] Much broader spec coverage tests
 - [ ] Error-reporting improvements with precise diagnostics
-- [ ] Static semantic analysis pass
+- [x] Static semantic analysis pass
 - [ ] Stable module system
 - [ ] FFI sufficient for OS and GUI bindings
 - [ ] Native code generation

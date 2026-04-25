@@ -1,0 +1,7 @@
+@fn inc [~ n :: int] => int [
+  n -> add(1)
+]
+
+@fn triple [~ n :: int] => int [
+  n -> mul(3)
+]

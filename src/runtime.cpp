@@ -1,8 +1,9 @@
 #include "runtime.h"
 #include <cmath>
 #include <iostream>
-#include <stdexcept>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 
 namespace dagger {
 
@@ -169,6 +170,158 @@ static std::vector<Value> flattenValue(const Value& value) {
     return {value};
 }
 
+static bool isBuiltinTypeName(std::string_view typeName) {
+    static const std::set<std::string, std::less<>> builtinTypes{
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "byte",
+        "float",
+        "float32",
+        "float64",
+        "bool",
+        "text",
+        "char",
+        "null",
+    };
+    return builtinTypes.contains(typeName);
+}
+
+static bool isIntegerTypeName(std::string_view typeName) {
+    static const std::set<std::string, std::less<>> integerTypes{
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "byte",
+    };
+    return integerTypes.contains(typeName);
+}
+
+static bool isFloatTypeName(std::string_view typeName) {
+    return typeName == "float" || typeName == "float32" || typeName == "float64";
+}
+
+static std::string valueKindName(const Value& value) {
+    switch (value.kind) {
+        case Value::Kind::Null:
+            return "null";
+        case Value::Kind::Int:
+            return "int";
+        case Value::Kind::Float:
+            return "float";
+        case Value::Kind::Bool:
+            return "bool";
+        case Value::Kind::Text:
+            return "text";
+        case Value::Kind::Char:
+            return "char";
+        case Value::Kind::List:
+            return "list";
+        case Value::Kind::Object:
+            return value.shapeName.value_or("object");
+    }
+    return "unknown";
+}
+
+static void requireKnownType(const EvalContext& context, std::string_view typeName) {
+    if (isBuiltinTypeName(typeName) || context.lookupShape(typeName)) {
+        return;
+    }
+    throw std::runtime_error("unknown type: " + std::string(typeName));
+}
+
+static void validateValueAgainstType(const Value& value, std::string_view typeName, const EvalContext& context);
+
+static void validateObjectAgainstShape(const Value& value, const ShapeDecl& shape, const EvalContext& context) {
+    if (value.kind != Value::Kind::Object) {
+        throw std::runtime_error("type mismatch: expected " + shape.name + ", got " + valueKindName(value));
+    }
+
+    for (const auto& field : shape.fields) {
+        auto it = value.objectValue.find(field.name);
+        if (it == value.objectValue.end()) {
+            throw std::runtime_error("type mismatch: missing field '" + field.name + "' for " + shape.name);
+        }
+        if (field.typeName) {
+            validateValueAgainstType(it->second, *field.typeName, context);
+        }
+    }
+
+    for (const auto& [fieldName, _] : value.objectValue) {
+        bool known = false;
+        for (const auto& field : shape.fields) {
+            if (field.name == fieldName) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            throw std::runtime_error("type mismatch: unknown field '" + fieldName + "' for " + shape.name);
+        }
+    }
+}
+
+static void validateValueAgainstType(const Value& value, std::string_view typeName, const EvalContext& context) {
+    requireKnownType(context, typeName);
+
+    if (isIntegerTypeName(typeName)) {
+        if (value.kind != Value::Kind::Int) {
+            throw std::runtime_error("type mismatch: expected " + std::string(typeName) + ", got " + valueKindName(value));
+        }
+        return;
+    }
+    if (isFloatTypeName(typeName)) {
+        if (value.kind != Value::Kind::Float) {
+            throw std::runtime_error("type mismatch: expected " + std::string(typeName) + ", got " + valueKindName(value));
+        }
+        return;
+    }
+    if (typeName == "bool") {
+        if (value.kind != Value::Kind::Bool) {
+            throw std::runtime_error("type mismatch: expected bool, got " + valueKindName(value));
+        }
+        return;
+    }
+    if (typeName == "text") {
+        if (value.kind != Value::Kind::Text) {
+            throw std::runtime_error("type mismatch: expected text, got " + valueKindName(value));
+        }
+        return;
+    }
+    if (typeName == "char") {
+        if (value.kind != Value::Kind::Char) {
+            throw std::runtime_error("type mismatch: expected char, got " + valueKindName(value));
+        }
+        return;
+    }
+    if (typeName == "null") {
+        if (value.kind != Value::Kind::Null) {
+            throw std::runtime_error("type mismatch: expected null, got " + valueKindName(value));
+        }
+        return;
+    }
+
+    auto* shape = context.lookupShape(typeName);
+    if (!shape) {
+        throw std::runtime_error("unknown type: " + std::string(typeName));
+    }
+    validateObjectAgainstShape(value, *shape, context);
+}
+
 std::optional<Value> EvalContext::lookupVariable(std::string_view name) const {
     auto it = variables.find(std::string(name));
     if (it != variables.end()) {
@@ -176,6 +329,17 @@ std::optional<Value> EvalContext::lookupVariable(std::string_view name) const {
     }
     if (parent) {
         return parent->lookupVariable(name);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> EvalContext::lookupVariableType(std::string_view name) const {
+    auto it = variableTypes.find(std::string(name));
+    if (it != variableTypes.end()) {
+        return it->second;
+    }
+    if (parent) {
+        return parent->lookupVariableType(name);
     }
     return std::nullopt;
 }
@@ -202,7 +366,8 @@ ShapeDecl* EvalContext::lookupShape(std::string_view name) const {
     return nullptr;
 }
 
-void EvalContext::defineVariable(std::string name, Value value) {
+void EvalContext::defineVariable(std::string name, Value value, std::optional<std::string> typeName) {
+    variableTypes[name] = typeName;
     variables[std::move(name)] = std::move(value);
 }
 
@@ -322,23 +487,33 @@ Value Interpreter::evalStatement(const Statement& statement, EvalContext& contex
             Value grouped = evalExpression(*decl->initializers.front(), context);
             if (grouped.kind == Value::Kind::List && grouped.listValue.size() == count) {
                 for (size_t i = 0; i < count; ++i) {
-                    context.defineVariable(decl->names[i], grouped.listValue[i]);
+                    if (decl->typeName) {
+                        validateValueAgainstType(grouped.listValue[i], *decl->typeName, context);
+                    }
+                    context.defineVariable(decl->names[i], grouped.listValue[i], decl->typeName);
                 }
                 return Value();
             }
         }
         for (size_t i = 0; i < count; ++i) {
             Value value;
+            bool hasInitializer = i < decl->initializers.size();
             if (i < decl->initializers.size()) {
                 value = evalExpression(*decl->initializers[i], context);
             }
             if (decl->typeName) {
-                if (auto* shape = context.lookupShape(*decl->typeName);
-                    shape && value.kind == Value::Kind::Object && !value.shapeName) {
-                    value.shapeName = shape->name;
+                requireKnownType(context, *decl->typeName);
+                if (hasInitializer) {
+                    validateValueAgainstType(value, *decl->typeName, context);
+                }
+                if (hasInitializer) {
+                    if (auto* shape = context.lookupShape(*decl->typeName);
+                        shape && value.kind == Value::Kind::Object && !value.shapeName) {
+                        value.shapeName = shape->name;
+                    }
                 }
             }
-            context.defineVariable(decl->names[i], std::move(value));
+            context.defineVariable(decl->names[i], std::move(value), decl->typeName);
         }
         return Value();
     }
@@ -355,6 +530,10 @@ Value Interpreter::evalStatement(const Statement& statement, EvalContext& contex
 
     if (auto exprStmt = dynamic_cast<const ExprStmt*>(&statement)) {
         return evalExpression(*exprStmt->expression, context);
+    }
+
+    if (dynamic_cast<const UseDecl*>(&statement)) {
+        throw std::runtime_error("@use requires file-based module loading");
     }
 
     throw std::runtime_error("unknown statement type");
@@ -525,17 +704,21 @@ Value Interpreter::evalRouteStage(const Expression& stage, const Value& current,
     if (auto capture = dynamic_cast<const CaptureExpr*>(&stage)) {
         Value captured = current;
         if (capture->typeName) {
+            validateValueAgainstType(captured, *capture->typeName, context);
             if (auto* shape = context.lookupShape(*capture->typeName);
                 shape && captured.kind == Value::Kind::Object && !captured.shapeName) {
                 captured.shapeName = shape->name;
             }
         }
-        context.defineVariable(capture->name, captured);
+        context.defineVariable(capture->name, captured, capture->typeName);
         return current;
     }
 
     if (auto identifier = dynamic_cast<const IdentifierExpr*>(&stage)) {
         if (!current.isNull()) {
+            if (auto typeName = context.lookupVariableType(identifier->name)) {
+                validateValueAgainstType(current, *typeName, context);
+            }
             if (context.assignVariable(identifier->name, current)) {
                 return current;
             }
@@ -561,7 +744,10 @@ Value Interpreter::evalRouteStage(const Expression& stage, const Value& current,
 
 Value Interpreter::evalField(const FieldExpr& field, const Value& input, EvalContext& context) {
     EvalContext local{&context, {}, {}, {}};
-    local.defineVariable(field.inputName.value_or("__input"), input);
+    if (field.inputTypeName) {
+        validateValueAgainstType(input, *field.inputTypeName, context);
+    }
+    local.defineVariable(field.inputName.value_or("__input"), input, field.inputTypeName);
     Value result;
     for (const auto& statement : field.body) {
         result = evalStatement(*statement, local);
@@ -616,14 +802,23 @@ Value Interpreter::callUserGate(const GateDecl& gate, const std::vector<Value>& 
             value = args[i];
         }
         if (gate.params[i].typeName) {
+            validateValueAgainstType(value, *gate.params[i].typeName, context);
             if (auto* shape = context.lookupShape(*gate.params[i].typeName);
                 shape && value.kind == Value::Kind::Object && !value.shapeName) {
                 value.shapeName = shape->name;
             }
         }
-        local.defineVariable(gate.params[i].name, std::move(value));
+        local.defineVariable(gate.params[i].name, std::move(value), gate.params[i].typeName);
     }
-    return evalExpression(*gate.body, local);
+    Value result = evalExpression(*gate.body, local);
+    if (gate.resultType) {
+        validateValueAgainstType(result, *gate.resultType, context);
+        if (auto* shape = context.lookupShape(*gate.resultType);
+            shape && result.kind == Value::Kind::Object && !result.shapeName) {
+            result.shapeName = shape->name;
+        }
+    }
+    return result;
 }
 
 static Value requireArg(const std::vector<Value>& args, size_t index, std::string_view name) {

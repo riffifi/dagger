@@ -1,0 +1,3 @@
+@use std.text
+
+"hi" -> std.text.exclaim -> out.writeln

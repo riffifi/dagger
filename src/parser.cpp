@@ -115,12 +115,17 @@ void Parser::consume(TokenKind kind, const char* message) {
 std::unique_ptr<Statement> Parser::parseStatement() {
     std::vector<std::string> annotations;
     while (check(TokenKind::Identifier) && !peek().text.empty() && peek().text[0] == '@' &&
-           peek().text != "@gate" && peek().text != "@fn" && peek().text != "@shape" && peek().text != "@type") {
+           peek().text != "@gate" && peek().text != "@fn" && peek().text != "@shape" && peek().text != "@type" &&
+           peek().text != "@use") {
         annotations.push_back(advance().text);
     }
 
     if (match(TokenKind::Identifier, "@gate") || match(TokenKind::Identifier, "@fn")) {
         return parseGateDecl(std::move(annotations));
+    }
+
+    if (match(TokenKind::Identifier, "@use")) {
+        return parseUseDecl();
     }
 
     if (match(TokenKind::Identifier, "@shape") || match(TokenKind::Identifier, "@type")) {
@@ -140,6 +145,24 @@ std::unique_ptr<Statement> Parser::parseStatement() {
     auto statement = std::make_unique<ExprStmt>();
     statement->expression = std::move(expression);
     return statement;
+}
+
+std::unique_ptr<Statement> Parser::parseUseDecl() {
+    auto decl = std::make_unique<UseDecl>();
+    consume(TokenKind::Identifier, "expected module name after @use");
+    decl->moduleName = previous().text;
+
+    if (match(TokenKind::Punctuation, "[")) {
+        if (!check(TokenKind::Punctuation, "]")) {
+            do {
+                consume(TokenKind::Identifier, "expected imported name");
+                decl->importedNames.push_back(previous().text);
+            } while (match(TokenKind::Punctuation, ","));
+        }
+        consume(TokenKind::Punctuation, "]", "expected ']' after import list");
+    }
+
+    return decl;
 }
 
 std::unique_ptr<Statement> Parser::parseStreamDecl(bool isStatic) {
@@ -492,6 +515,9 @@ std::unique_ptr<Expression> Parser::parseFieldExpressionFromBracket() {
             return nullptr;
         }
         field->inputName = advance().text;
+        if (match(TokenKind::Operator, "::")) {
+            field->inputTypeName = parseShape();
+        }
         consume(TokenKind::Punctuation, "]", "expected ']' after field parameter");
         consume(TokenKind::Punctuation, "[", "expected '[' before field body");
     }
