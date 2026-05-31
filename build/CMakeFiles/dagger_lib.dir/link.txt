@@ -1,2 +1,2 @@
-/usr/bin/ar qc libdagger_lib.a CMakeFiles/dagger_lib.dir/src/driver.cpp.o CMakeFiles/dagger_lib.dir/src/lexer.cpp.o CMakeFiles/dagger_lib.dir/src/parser.cpp.o CMakeFiles/dagger_lib.dir/src/runtime.cpp.o
+/usr/bin/ar qc libdagger_lib.a CMakeFiles/dagger_lib.dir/src/driver.cpp.o CMakeFiles/dagger_lib.dir/src/lexer.cpp.o CMakeFiles/dagger_lib.dir/src/parser.cpp.o CMakeFiles/dagger_lib.dir/src/runtime.cpp.o CMakeFiles/dagger_lib.dir/src/semantics.cpp.o CMakeFiles/dagger_lib.dir/src/stdlib.cpp.o CMakeFiles/dagger_lib.dir/src/sir.cpp.o CMakeFiles/dagger_lib.dir/src/lowering.cpp.o CMakeFiles/dagger_lib.dir/src/regalloc.cpp.o CMakeFiles/dagger_lib.dir/src/codegen.cpp.o
 /usr/bin/ranlib libdagger_lib.a

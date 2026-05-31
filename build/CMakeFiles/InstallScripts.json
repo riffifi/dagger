@@ -1,7 +1,7 @@
 {
 	"InstallScripts" : 
 	[
-		"/home/leo/dagger/build/cmake_install.cmake"
+		"/home/leo/dev/cpp/projects/dagger/build/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

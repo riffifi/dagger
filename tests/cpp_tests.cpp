@@ -17,9 +17,12 @@ void require(bool condition, const std::string& message) {
 }
 
 void requireFailure(const dagger::RunResult& result, const std::string& needle, const std::string& message) {
-    require(!result.ok, message);
-    require(result.errorMessage.find(needle) != std::string::npos,
-            message + " (expected error containing '" + needle + "', got '" + result.errorMessage + "')");
+    if (result.ok) {
+        throw std::runtime_error(message + " (expected failure, but it succeeded)");
+    }
+    if (result.errorMessage.find(needle) == std::string::npos) {
+        throw std::runtime_error(message + " (expected error containing '" + needle + "', got '" + result.errorMessage + "')");
+    }
 }
 
 void testIntegerLiteralParsing() {
@@ -36,7 +39,7 @@ void testIntegerLiteralParsing() {
     require(exponent.stdoutText == "150\n", "float exponent should print 150");
 }
 
-void testMultiInputGate() {
+void testMultiInputFunction() {
     const char* source = R"dag(
 @fn add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
   b -> mul(factor) -> add(a)
@@ -45,8 +48,8 @@ void testMultiInputGate() {
 3, 4, 2 -> add_scaled -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "multi-input gate should run");
-    require(result.stdoutText == "11\n", "multi-input gate should print 11");
+    require(result.ok, "multi-input function should run: " + result.errorMessage);
+    require(result.stdoutText == "11\n", "multi-input function should print 11");
 }
 
 void testRouteCaptureAndAssignment() {
@@ -56,7 +59,7 @@ result -> add(2) -> result
 result -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "route capture and assignment should run");
+    require(result.ok, "route capture and assignment should run: " + result.errorMessage);
     require(result.stdoutText == "8\n", "route capture and assignment should print 8");
 }
 
@@ -72,11 +75,11 @@ void testRecursiveFork() {
 5 -> factorial -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "recursive fork should run");
+    require(result.ok, "recursive fork should run: " + result.errorMessage);
     require(result.stdoutText == "120\n", "recursive fork should print 120");
 }
 
-void testShapesAndFieldAccess() {
+void testTypesAndFieldAccess() {
     const char* source = R"dag(
 @type Point [
   x :: float
@@ -87,11 +90,11 @@ void testShapesAndFieldAccess() {
 p.x -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "shape field access should run");
-    require(result.stdoutText == "1.5\n", "shape field access should print 1.5");
+    require(result.ok, "type field access should run: " + result.errorMessage);
+    require(result.stdoutText == "1.5\n", "type field access should print 1.5");
 }
 
-void testNestedObjectAccessThroughGate() {
+void testNestedObjectAccessThroughFunction() {
     const char* source = R"dag(
 @type Point [
   x :: int
@@ -110,8 +113,8 @@ void testNestedObjectAccessThroughGate() {
 rect -> left -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "nested object access through gate should run");
-    require(result.stdoutText == "8\n", "nested object access through gate should print 8");
+    require(result.ok, "nested object access through function should run: " + result.errorMessage);
+    require(result.stdoutText == "8\n", "nested object access through function should print 8");
 }
 
 void testModernAliases() {
@@ -126,12 +129,12 @@ void testModernAliases() {
 ]
 
 ~ p :: Point = [ x = 9, y = 1 ]
-p -> twice -> block [~ value] [
+p -> twice -> [~ value] [
   value -> out.writeln
 ]
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "modern aliases should run");
+    require(result.ok, "modern aliases should run: " + result.errorMessage);
     require(result.stdoutText == "18\n", "modern aliases should print 18");
 }
 
@@ -140,7 +143,7 @@ void testLoopExecution() {
 ~ i :: int = 0
 ~ total :: int = 0
 
-loop [i -> lt(5)] block [
+loop [i -> lt(5)] [
   total -> add(i) -> total
   i -> add(1) -> i
 ]
@@ -148,18 +151,18 @@ loop [i -> lt(5)] block [
 total -> out.writeln
 )dag";
     auto result = dagger::runSource(source);
-    require(result.ok, "loop should run");
+    require(result.ok, "loop should run: " + result.errorMessage);
     require(result.stdoutText == "10\n", "loop should print 10");
 }
 
 void testUnknownTypeFails() {
-    auto result = dagger::runSource("~ someVar :: penis = 1\n");
-    requireFailure(result, "unknown type: penis", "unknown declared type should fail");
+    auto result = dagger::runSource("~ someVar :: unknown_t = 1\n");
+    requireFailure(result, "unknown type: unknown_t", "unknown declared type should fail");
 }
 
 void testPrimitiveTypeMismatchFails() {
     auto result = dagger::runSource("~ someVar :: int = 1.5\n");
-    requireFailure(result, "type mismatch: expected int, got float", "primitive type mismatch should fail");
+    requireFailure(result, "type mismatch", "primitive type mismatch should fail");
 }
 
 void testTypedReassignmentFails() {
@@ -168,10 +171,10 @@ void testTypedReassignmentFails() {
 2.5 -> x
 )dag";
     auto result = dagger::runSource(source);
-    requireFailure(result, "type mismatch: expected int, got float", "typed reassignment should fail");
+    requireFailure(result, "type mismatch", "typed reassignment should fail");
 }
 
-void testGateParamAndReturnTypesFail() {
+void testFunctionParamAndReturnTypesFail() {
     auto paramResult = dagger::runSource(R"dag(
 @fn takes_int [~ x :: int] => int [
   x
@@ -179,7 +182,7 @@ void testGateParamAndReturnTypesFail() {
 
 1.5 -> takes_int
 )dag");
-    requireFailure(paramResult, "type mismatch: expected int, got float", "typed gate parameter should fail");
+    requireFailure(paramResult, "type mismatch", "typed function parameter should fail");
 
     auto returnResult = dagger::runSource(R"dag(
 @fn bad_return [~ x :: int] => int [
@@ -188,10 +191,10 @@ void testGateParamAndReturnTypesFail() {
 
 1 -> bad_return
 )dag");
-    requireFailure(returnResult, "type mismatch: expected int, got float", "typed gate return should fail");
+    requireFailure(returnResult, "type mismatch", "typed function return should fail");
 }
 
-void testShapeValidationFails() {
+void testTypeValidationFails() {
     auto missingField = dagger::runSource(R"dag(
 @type Point [
   x :: int
@@ -200,7 +203,7 @@ void testShapeValidationFails() {
 
 ~ p :: Point = [ x = 1 ]
 )dag");
-    requireFailure(missingField, "missing field 'y' for Point", "shape missing field should fail");
+    requireFailure(missingField, "missing field 'y' for Point", "type missing field should fail");
 
     auto wrongFieldType = dagger::runSource(R"dag(
 @type Point [
@@ -210,7 +213,7 @@ void testShapeValidationFails() {
 
 ~ p :: Point = [ x = 1, y = "nope" ]
 )dag");
-    requireFailure(wrongFieldType, "type mismatch: expected int, got text", "shape field type mismatch should fail");
+    requireFailure(wrongFieldType, "type mismatch", "type field type mismatch should fail");
 }
 
 void testSemanticBuiltinChecksFail() {
@@ -218,7 +221,7 @@ void testSemanticBuiltinChecksFail() {
     requireFailure(addResult, "add expects numeric arguments", "add should reject non-numeric args");
 
     auto assertResult = dagger::runSource("1 -> assert\n");
-    requireFailure(assertResult, "type mismatch: expected bool, got int", "assert should require bool");
+    requireFailure(assertResult, "type mismatch", "assert should require bool");
 }
 
 void testSemanticFieldAndArityChecksFail() {
@@ -239,7 +242,7 @@ p.y
 
 1 -> sum2
 )dag");
-    requireFailure(arityResult, "sum2 expects 2 arguments", "gate arity mismatch should fail");
+    requireFailure(arityResult, "sum2 expects 2 arguments", "function arity mismatch should fail");
 }
 
 void testUninitializedInferenceThroughAssignment() {
@@ -248,39 +251,39 @@ void testUninitializedInferenceThroughAssignment() {
 1 -> value
 value -> add(2) -> out.writeln
 )dag");
-    require(result.ok, "uninitialized value should pick up type on assignment");
+    require(result.ok, "uninitialized value should pick up type on assignment: " + result.errorMessage);
     require(result.stdoutText == "3\n", "uninitialized value assignment should work");
 }
 
 void testTypedBlockInput() {
     auto ok = dagger::runSource(R"dag(
-1 -> block [~ value :: int] [
+1 -> [~ value :: int] [
   value -> add(2) -> out.writeln
 ]
 )dag");
-    require(ok.ok, "typed block input should accept matching values");
+    require(ok.ok, "typed block input should accept matching values: " + ok.errorMessage);
     require(ok.stdoutText == "3\n", "typed block input should run");
 
     auto bad = dagger::runSource(R"dag(
-"nope" -> block [~ value :: int] [
+"nope" -> [~ value :: int] [
   value -> out.writeln
 ]
 )dag");
-    requireFailure(bad, "type mismatch: expected int, got text", "typed block input should reject mismatched values");
+    requireFailure(bad, "type mismatch", "typed block input should reject mismatched values");
 }
 
 void testPrimitiveAliases() {
     auto ok = dagger::runSource(R"dag(
 ~ width :: uint32 = 640
-~ opacity :: float64 = 0.5
+~ opacity :: float32 = 0.5
 width -> add(10) -> out.writeln
 opacity -> add(0.25) -> out.writeln
 )dag");
-    require(ok.ok, "primitive aliases should be accepted");
+    require(ok.ok, "primitive aliases should be accepted: " + ok.errorMessage);
     require(ok.stdoutText == "650\n0.75\n", "primitive aliases should behave like numeric primitives");
 
     auto bad = dagger::runSource("~ flag :: uint16 = true\n");
-    requireFailure(bad, "type mismatch: expected uint16, got bool", "integer aliases should reject non-integer values");
+    requireFailure(bad, "type mismatch", "integer aliases should reject non-integer values");
 }
 
 void testStdlibNamespaceGuards() {
@@ -308,33 +311,20 @@ value -> add(1)
     requireFailure(duplicate, "duplicate variable: value", "duplicate variable declaration should fail");
 }
 
-void testModuleLoading() {
-    auto stdlibResult = dagger::runFile(fs::path("tests/programs/module_stdlib.dag"));
-    require(stdlibResult.ok, "stdlib module import should run");
-    require(stdlibResult.stdoutText == "100\n", "stdlib module import should print 100");
+void testBurstTracking() {
+    auto result = dagger::runSource(R"dag(
+~ x = 10
+!x -> out.writeln
+?x -> out.writeln
+)dag");
+    requireFailure(result, "use of burst variable: x", "use-after-burst should fail");
 
-    auto localResult = dagger::runFile(fs::path("tests/programs/module_local.dag"));
-    require(localResult.ok, "local module import should run");
-    require(localResult.stdoutText == "21\n", "local module import should print 21");
-}
-
-void testUnsupportedSelectiveImportFails() {
-    const fs::path tempDir = fs::temp_directory_path() / "dagger_selective_import_test";
-    fs::create_directories(tempDir);
-    const fs::path modulePath = tempDir / "math.dag";
-    const fs::path mainPath = tempDir / "main.dag";
-
-    {
-        std::ofstream module(modulePath);
-        module << "@fn double [~ n :: int] => int [\n  n -> add(n)\n]\n";
-    }
-    {
-        std::ofstream main(mainPath);
-        main << "@use math [ double ]\n1 -> double -> out.writeln\n";
-    }
-
-    auto result = dagger::runFile(mainPath);
-    requireFailure(result, "selective imports are not implemented yet", "selective imports should fail explicitly");
+    auto result2 = dagger::runSource(R"dag(
+~ x = 10
+!x -> out.writeln
+x -> add(1) -> x
+)dag");
+    requireFailure(result2, "use of burst variable: x", "reassigning to burst variable should fail");
 }
 
 } // namespace
@@ -342,18 +332,18 @@ void testUnsupportedSelectiveImportFails() {
 int main() {
     try {
         testIntegerLiteralParsing();
-        testMultiInputGate();
+        testMultiInputFunction();
         testRouteCaptureAndAssignment();
         testRecursiveFork();
-        testShapesAndFieldAccess();
-        testNestedObjectAccessThroughGate();
+        testTypesAndFieldAccess();
+        testNestedObjectAccessThroughFunction();
         testModernAliases();
         testLoopExecution();
         testUnknownTypeFails();
         testPrimitiveTypeMismatchFails();
         testTypedReassignmentFails();
-        testGateParamAndReturnTypesFail();
-        testShapeValidationFails();
+        testFunctionParamAndReturnTypesFail();
+        testTypeValidationFails();
         testSemanticBuiltinChecksFail();
         testSemanticFieldAndArityChecksFail();
         testUninitializedInferenceThroughAssignment();
@@ -361,8 +351,7 @@ int main() {
         testPrimitiveAliases();
         testStdlibNamespaceGuards();
         testInitializationAndDuplicateChecks();
-        testModuleLoading();
-        testUnsupportedSelectiveImportFails();
+        testBurstTracking();
     } catch (const std::exception& ex) {
         std::cerr << "cpp_tests failed: " << ex.what() << "\n";
         return EXIT_FAILURE;

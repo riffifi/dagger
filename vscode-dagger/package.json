@@ -1,0 +1,41 @@
+{
+  "name": "dagger-language",
+  "displayName": "Dagger Language",
+  "description": "Syntax highlighting and language support for the Dagger programming language.",
+  "version": "0.0.1",
+  "publisher": "daggerlang",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dagger",
+        "aliases": ["Dagger", "dag"],
+        "extensions": [".dag"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dagger",
+        "scopeName": "source.dagger",
+        "path": "./syntaxes/dagger.tmLanguage.json"
+      }
+    ]
+  },
+  "icon": "./media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daggerlang/dagger"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.0.1"
+  },
+  "scripts": {
+    "package": "npx @vscode/vsce package"
+  }
+}

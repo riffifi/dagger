@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/student/dagger/src/main.cpp" "CMakeFiles/dagc.dir/src/main.cpp.o" "gcc" "CMakeFiles/dagc.dir/src/main.cpp.o.d"
+  "/home/leo/dev/cpp/projects/dagger/src/main.cpp" "CMakeFiles/dagc.dir/src/main.cpp.o" "gcc" "CMakeFiles/dagc.dir/src/main.cpp.o.d"
   "" "dagc" "gcc" "CMakeFiles/dagc.dir/link.d"
   )
 

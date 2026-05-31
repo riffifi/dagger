@@ -1,4 +1,6 @@
 #include "driver.h"
+#include "regalloc.h"
+#include "codegen.h"
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -302,6 +304,44 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    std::cout << "Usage: dagc [--repl] <source.dag>\n";
+    if (argc == 3 && std::string(argv[1]) == "-S") {
+        auto program = dagger::parseFile(argv[2]);
+        if (program) {
+            auto sir = dagger::lowerProgram(*program);
+            dagger::GreedyRegisterAllocator regAlloc;
+            std::map<std::string, dagger::AllocationResult> allocations;
+            for (const auto& func : sir.functions) {
+                allocations[func.name] = regAlloc.allocate(func);
+            }
+            dagger::CodeGenerator codegen;
+            std::cout << codegen.generate(sir, allocations);
+        }
+        return 0;
+    }
+
+    if (argc == 3 && std::string(argv[1]) == "--emit-sir") {
+        auto program = dagger::parseFile(argv[2]);
+        if (program) {
+            auto sir = dagger::lowerProgram(*program);
+            dagger::printSIR(sir);
+            
+            std::cout << "--- Register Allocation ---\n";
+            dagger::GreedyRegisterAllocator regAlloc;
+            for (const auto& func : sir.functions) {
+                std::cout << "fn " << func.name << ":\n";
+                auto allocation = regAlloc.allocate(func);
+                for (const auto& [vreg, reg] : allocation.assignments) {
+                    std::cout << "  %" << vreg << " -> " << dagger::registerName(reg) << "\n";
+                }
+                for (const auto& [vreg, slot] : allocation.stackSlots) {
+                    std::cout << "  %" << vreg << " -> stack[" << slot << "]\n";
+                }
+                std::cout << "  Total stack space: " << allocation.totalStackSpace << "\n";
+            }
+        }
+        return 0;
+    }
+
+    std::cout << "Usage: dagc [--repl] [--emit-sir] <source.dag>\n";
     return 1;
 }

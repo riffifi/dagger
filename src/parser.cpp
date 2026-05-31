@@ -84,7 +84,7 @@ bool Parser::check(TokenKind kind, std::string_view text) const {
     return peek().text == text;
 }
 
-bool Parser::isShapeBracketSuffix() const {
+bool Parser::isTypeBracketSuffix() const {
     if (!check(TokenKind::Punctuation, "[")) {
         return false;
     }
@@ -92,6 +92,7 @@ bool Parser::isShapeBracketSuffix() const {
         return false;
     }
     const Token& prior = tokens_.at(current_ - 1);
+    // In Dagger, type arguments like block[256] must be immediately adjacent
     return peek().line == prior.line &&
            peek().column == prior.column + static_cast<int>(prior.text.size());
 }
@@ -114,37 +115,58 @@ void Parser::consume(TokenKind kind, const char* message) {
 
 std::unique_ptr<Statement> Parser::parseStatement() {
     std::vector<std::string> annotations;
-    while (check(TokenKind::Identifier) && !peek().text.empty() && peek().text[0] == '@' &&
-           peek().text != "@gate" && peek().text != "@fn" && peek().text != "@shape" && peek().text != "@type" &&
-           peek().text != "@use") {
+    while (check(TokenKind::Keyword) && peek().text.size() > 0 && peek().text[0] == '@' &&
+           peek().text != "@fn" && peek().text != "@type" && peek().text != "@use") {
         annotations.push_back(advance().text);
     }
 
-    if (match(TokenKind::Identifier, "@gate") || match(TokenKind::Identifier, "@fn")) {
-        return parseGateDecl(std::move(annotations));
+    if (match(TokenKind::Keyword, "@fn")) {
+        return parseFunctionDecl(std::move(annotations));
     }
 
-    if (match(TokenKind::Identifier, "@use")) {
+    if (match(TokenKind::Keyword, "@use")) {
         return parseUseDecl();
     }
 
-    if (match(TokenKind::Identifier, "@shape") || match(TokenKind::Identifier, "@type")) {
-        return parseShapeDecl();
+    if (match(TokenKind::Keyword, "@type")) {
+        return parseTypeDecl();
     }
 
-    if (annotations.size() == 1 && annotations[0] == "@static" && match(TokenKind::Operator, "~")) {
+    if (annotations.size() == 1 && annotations[0] == "@static" && check(TokenKind::Operator, "~")) {
+        advance();
         return parseStreamDecl(true);
     }
-
+    
     if (check(TokenKind::Operator, "~")) {
         advance();
         return parseStreamDecl(false);
+    }
+
+    if (check(TokenKind::Keyword) && peek().text.size() > 0 && peek().text[0] == '@') {
+        return parseDirectiveStmt();
     }
 
     auto expression = parseExpression();
     auto statement = std::make_unique<ExprStmt>();
     statement->expression = std::move(expression);
     return statement;
+}
+
+std::unique_ptr<Statement> Parser::parseDirectiveStmt() {
+    auto decl = std::make_unique<DirectiveStmt>();
+    decl->directive = advance().text;
+    
+    // Some directives might take arguments in parentheses, like @error("tag")
+    if (match(TokenKind::Punctuation, "(")) {
+        if (!check(TokenKind::Punctuation, ")")) {
+            do {
+                decl->arguments.push_back(parseSingleExpression());
+            } while (match(TokenKind::Punctuation, ","));
+        }
+        consume(TokenKind::Punctuation, ")", "expected ')' after directive arguments");
+    }
+    
+    return decl;
 }
 
 std::unique_ptr<Statement> Parser::parseUseDecl() {
@@ -178,7 +200,10 @@ std::unique_ptr<Statement> Parser::parseStreamDecl(bool isStatic) {
     } while (match(TokenKind::Punctuation, ","));
 
     if (match(TokenKind::Operator, "::")) {
-        decl->typeName = parseShape();
+        decl->typeName = parseType();
+        if ((check(TokenKind::Keyword) || check(TokenKind::Identifier)) && peek().text.size() > 1 && peek().text[0] == '@') {
+             decl->registerPin = advance().text;
+        }
     }
 
     if (match(TokenKind::Operator, "=")) {
@@ -190,86 +215,125 @@ std::unique_ptr<Statement> Parser::parseStreamDecl(bool isStatic) {
     return decl;
 }
 
-std::unique_ptr<Statement> Parser::parseShapeDecl() {
-    auto decl = std::make_unique<ShapeDecl>();
-    consume(TokenKind::Identifier, "expected shape name");
+std::unique_ptr<Statement> Parser::parseTypeDecl() {
+    auto decl = std::make_unique<TypeDecl>();
+    consume(TokenKind::Identifier, "expected type name");
     decl->name = previous().text;
-    consume(TokenKind::Punctuation, "[", "expected '[' after shape name");
-    while (!check(TokenKind::Punctuation, "]") && !isAtEnd()) {
-        decl->fields.push_back(parseShapeField());
-        match(TokenKind::Punctuation, ",");
+    consume(TokenKind::Punctuation, "[", "expected '[' after type name");
+    
+    if (check(TokenKind::Operator, "|")) {
+        decl->isUnion = true;
+        while (match(TokenKind::Operator, "|")) {
+            TypeField field;
+            field.typeName = parseType();
+            decl->fields.push_back(std::move(field));
+            // Optional newline/comma handling can be added here
+            match(TokenKind::Punctuation, ",");
+        }
+    } else {
+        while (!check(TokenKind::Punctuation, "]") && !isAtEnd()) {
+            decl->fields.push_back(parseTypeField());
+            match(TokenKind::Punctuation, ",");
+        }
     }
-    consume(TokenKind::Punctuation, "]", "expected ']' after shape body");
+    
+    consume(TokenKind::Punctuation, "]", "expected ']' after type body");
     return decl;
 }
 
-std::unique_ptr<Statement> Parser::parseGateDecl(std::vector<std::string> annotations) {
-    auto decl = std::make_unique<GateDecl>();
+std::unique_ptr<Statement> Parser::parseFunctionDecl(std::vector<std::string> annotations) {
+    auto decl = std::make_unique<FunctionDecl>();
     decl->annotations = std::move(annotations);
 
     if (!check(TokenKind::Identifier)) {
-        consume(TokenKind::Identifier, "expected gate name");
+        consume(TokenKind::Identifier, "expected function name");
         return nullptr;
     }
     decl->name = advance().text;
 
-    consume(TokenKind::Punctuation, "[", "expected '[' after gate name");
+    consume(TokenKind::Punctuation, "[", "expected '[' after function name");
     if (!check(TokenKind::Punctuation, "]")) {
         do {
-            decl->params.push_back(parseGateParam());
+            decl->params.push_back(parseFunctionParam());
         } while (match(TokenKind::Punctuation, ","));
     }
-    consume(TokenKind::Punctuation, "]", "expected ']' after gate parameters");
+    consume(TokenKind::Punctuation, "]", "expected ']' after function parameters");
 
     if (match(TokenKind::Operator, "=>")) {
-        decl->resultType = parseShape();
+        decl->resultType = parseType();
     }
 
-    decl->body = parseFieldExpression();
-    return decl;
-}
+    if (match(TokenKind::Punctuation, "[")) {
+        auto body = std::make_unique<BlockExpr>();
+        body->body = parseBlockStatements();
+        consume(TokenKind::Punctuation, "]", "expected ']' after function body");
+        decl->body = std::move(body);
+    } else {
+        bool isExtern = false;
+        for (const auto& ann : decl->annotations) {
+            if (ann == "@extern" || ann == "@syscall") {
+                isExtern = true;
+                break;
+            }
+        }
+        if (!isExtern) {
+            consume(TokenKind::Punctuation, "[", "expected '[' before function body");
+        }
+    }
 
-GateParam Parser::parseGateParam() {
-    GateParam param;
+    return decl;
+    }
+
+FunctionParam Parser::parseFunctionParam() {
+    FunctionParam param;
     consume(TokenKind::Operator, "~", "expected '~' before param name");
     consume(TokenKind::Identifier, "expected parameter name");
     param.name = previous().text;
     if (match(TokenKind::Operator, "::")) {
-        param.typeName = parseShape();
+        param.typeName = parseType();
     }
     return param;
 }
 
-ShapeField Parser::parseShapeField() {
-    ShapeField field;
+TypeField Parser::parseTypeField() {
+    TypeField field;
     consume(TokenKind::Identifier, "expected field name");
     field.name = previous().text;
     if (match(TokenKind::Operator, "::")) {
-        field.typeName = parseShape();
+        field.typeName = parseType();
     }
     return field;
 }
 
-std::string Parser::parseShape() {
-    std::string shape;
+std::string Parser::parseType() {
+    std::string type;
     if (check(TokenKind::Identifier) || check(TokenKind::Keyword)) {
-        shape = advance().text;
+        type = advance().text;
     } else {
-        consume(TokenKind::Identifier, "expected shape name");
+        consume(TokenKind::Identifier, "expected type name");
         return std::string();
     }
 
-    while (isShapeBracketSuffix()) {
+    while (isTypeBracketSuffix()) {
         advance();
-        shape.push_back('[');
+        type.push_back('[');
         while (!check(TokenKind::Punctuation, "]") && !isAtEnd()) {
-            shape += advance().text;
+            type += advance().text;
         }
-        consume(TokenKind::Punctuation, "]", "expected ']' after shape argument");
-        shape.push_back(']');
+        consume(TokenKind::Punctuation, "]", "expected ']' after type argument");
+        type.push_back(']');
+    }
+    
+    if (match(TokenKind::Operator, "?")) {
+        type.push_back('?');
+    }
+    if (match(TokenKind::Operator, "!")) {
+        type.push_back('!');
+        consume(TokenKind::Identifier, "expected error tag after '!'");
+        type += previous().text;
     }
 
-    return shape;
+    return type;
 }
 
 std::unique_ptr<Expression> Parser::parseExpression() {
@@ -332,6 +396,14 @@ std::unique_ptr<Expression> Parser::parsePrefix() {
         expr->right = parsePrefix();
         return expr;
     }
+    
+    if (match(TokenKind::Operator, "&") || match(TokenKind::Operator, "*")) {
+        auto expr = std::make_unique<PrefixExpr>();
+        expr->op = previous().text;
+        expr->right = parsePrefix();
+        return expr;
+    }
+    
     return parseCall();
 }
 
@@ -367,15 +439,17 @@ static int64_t parseIntegerLiteral(std::string_view text) {
     size_t start = negative ? 1 : 0;
     int base = 10;
 
-    if (text.substr(start, 2) == "0x" || text.substr(start, 2) == "0X") {
-        base = 16;
-        start += 2;
-    } else if (text.substr(start, 2) == "0b" || text.substr(start, 2) == "0B") {
-        base = 2;
-        start += 2;
-    } else if (text.substr(start, 2) == "0o" || text.substr(start, 2) == "0O") {
-        base = 8;
-        start += 2;
+    if (text.size() > start + 2) {
+        if (text.substr(start, 2) == "0x" || text.substr(start, 2) == "0X") {
+            base = 16;
+            start += 2;
+        } else if (text.substr(start, 2) == "0b" || text.substr(start, 2) == "0B") {
+            base = 2;
+            start += 2;
+        } else if (text.substr(start, 2) == "0o" || text.substr(start, 2) == "0O") {
+            base = 8;
+            start += 2;
+        }
     }
 
     int64_t value = 0;
@@ -388,11 +462,9 @@ static int64_t parseIntegerLiteral(std::string_view text) {
         } else if (c >= 'A' && c <= 'F') {
             digit = 10 + (c - 'A');
         } else {
-            throw std::runtime_error("invalid integer literal");
+            continue; // Skip separators if any, or handle errors
         }
-        if (digit >= base) {
-            throw std::runtime_error("invalid digit for integer base");
-        }
+        if (digit >= base) continue;
         value = (value * base) + digit;
     }
 
@@ -444,16 +516,22 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
         return std::make_unique<LiteralExpr>();
     }
 
-    if (match(TokenKind::Identifier, "field") || match(TokenKind::Keyword, "field") ||
-        match(TokenKind::Identifier, "block") || match(TokenKind::Keyword, "block")) {
-        return parseFieldExpression();
+    if (check(TokenKind::Keyword, "block")) {
+        return parseBlockExpression();
     }
 
-    if (match(TokenKind::Identifier, "fork") || match(TokenKind::Keyword, "fork")) {
+    if (match(TokenKind::Keyword, "fork")) {
         return parseForkExpression();
     }
 
-    if (match(TokenKind::Identifier, "loop") || match(TokenKind::Keyword, "loop")) {
+    if (match(TokenKind::Keyword, "loop")) {
+        if (checkAt(0, TokenKind::Identifier, "range")) {
+             return parseLoopExpression(); // Special handling for loop.range
+        }
+        return parseLoopExpression();
+    }
+    
+    if (match(TokenKind::Identifier, "loop.range")) {
         return parseLoopExpression();
     }
 
@@ -467,7 +545,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
         if (check(TokenKind::Identifier) && checkAt(1, TokenKind::Operator, "=")) {
             return parseStructLiteralFromBracket();
         }
-        return parseFieldExpressionFromBracket();
+        return parseBlockExpressionFromBracket();
     }
 
     if (match(TokenKind::Operator, "~")) {
@@ -475,7 +553,7 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
         consume(TokenKind::Identifier, "expected stream name after '~'");
         capture->name = previous().text;
         if (match(TokenKind::Operator, "::")) {
-            capture->typeName = parseShape();
+            capture->typeName = parseType();
         }
         return capture;
     }
@@ -484,6 +562,9 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
         if (peek().text == "_") {
             advance();
             return std::make_unique<WildcardExpr>();
+        }
+        if (peek().text == "each") {
+            return parseEachExpression();
         }
         auto identifier = std::make_unique<IdentifierExpr>();
         identifier->name = advance().text;
@@ -495,40 +576,48 @@ std::unique_ptr<Expression> Parser::parsePrimary() {
     return nullptr;
 }
 
-std::unique_ptr<Expression> Parser::parseFieldExpression() {
-    if (match(TokenKind::Punctuation, "[")) {
-        return parseFieldExpressionFromBracket();
+std::unique_ptr<Expression> Parser::parseBlockExpression() {
+    consume(TokenKind::Keyword, "block", "expected 'block'");
+    std::string name;
+    if (check(TokenKind::Identifier) && peek().text.size() > 0 && peek().text[0] == '.') {
+        name = advance().text;
     }
-    std::cerr << "parser error: expected field expression\n";
-    return nullptr;
+    consume(TokenKind::Punctuation, "[", "expected '[' after block");
+    return parseBlockExpressionFromBracket(name);
 }
 
-std::unique_ptr<Expression> Parser::parseFieldExpressionFromBracket() {
-    auto field = std::make_unique<FieldExpr>();
-    bool hasExplicitParam = false;
+std::unique_ptr<Expression> Parser::parseBlockExpressionFromBracket(std::string name) {
+    auto block = std::make_unique<BlockExpr>();
+    block->name = std::move(name);
 
+    bool hasParam = false;
     if (check(TokenKind::Operator, "~")) {
-        hasExplicitParam = true;
-        advance();
-        if (!check(TokenKind::Identifier)) {
-            consume(TokenKind::Identifier, "expected input name after '~' in field");
-            return nullptr;
+        // Look ahead to see if this is followed by ] then [
+        size_t offset = 1;
+        while (current_ + offset < tokens_.size() && tokens_[current_ + offset].kind != TokenKind::Punctuation) {
+            offset++;
         }
-        field->inputName = advance().text;
+        if (current_ + offset + 1 < tokens_.size() && 
+            tokens_[current_ + offset].kind == TokenKind::Punctuation && tokens_[current_ + offset].text == "]" &&
+            tokens_[current_ + offset + 1].kind == TokenKind::Punctuation && tokens_[current_ + offset + 1].text == "[") {
+            hasParam = true;
+        }
+    }
+
+    if (hasParam) {
+        advance(); // ~
+        consume(TokenKind::Identifier, "expected input name after '~' in block");
+        block->inputName = previous().text;
         if (match(TokenKind::Operator, "::")) {
-            field->inputTypeName = parseShape();
+            block->inputTypeName = parseType();
         }
-        consume(TokenKind::Punctuation, "]", "expected ']' after field parameter");
-        consume(TokenKind::Punctuation, "[", "expected '[' before field body");
+        consume(TokenKind::Punctuation, "]", "expected ']' after block parameter");
+        consume(TokenKind::Punctuation, "[", "expected '[' before block body");
     }
+    block->body = parseBlockStatements();
+    consume(TokenKind::Punctuation, "]", "expected ']' after block body");
 
-    if (!hasExplicitParam) {
-        field->inputName = "__input";
-    }
-
-    field->body = parseBlockStatements();
-    consume(TokenKind::Punctuation, "]", "expected ']' after field body");
-    return field;
+    return block;
 }
 
 std::unique_ptr<Expression> Parser::parseStructLiteralFromBracket() {
@@ -553,7 +642,13 @@ std::unique_ptr<Expression> Parser::parseForkExpression() {
     consume(TokenKind::Punctuation, "[", "expected '[' after fork");
     while (!check(TokenKind::Punctuation, "]") && !isAtEnd()) {
         auto arm = ForkArm();
-        arm.condition = parsePrefix();
+        if (match(TokenKind::Keyword, "@ok") || match(TokenKind::Keyword, "@err")) {
+             auto ident = std::make_unique<IdentifierExpr>();
+             ident->name = previous().text;
+             arm.condition = std::move(ident);
+        } else {
+             arm.condition = parsePrefix();
+        }
         consume(TokenKind::Operator, "->", "expected '->' in fork arm");
         arm.body = parseExpression();
         fork->arms.push_back(std::move(arm));
@@ -566,14 +661,35 @@ std::unique_ptr<Expression> Parser::parseForkExpression() {
 }
 
 std::unique_ptr<Expression> Parser::parseLoopExpression() {
-    consume(TokenKind::Punctuation, "[", "expected '[' after loop");
-    auto condition = parseExpression();
-    consume(TokenKind::Punctuation, "]", "expected ']' after loop condition");
-    auto body = parseExpression();
     auto loop = std::make_unique<LoopExpr>();
-    loop->condition = std::move(condition);
+    consume(TokenKind::Punctuation, "[", "expected '[' after loop condition");
+    loop->condition = parseExpression();
+    consume(TokenKind::Punctuation, "]", "expected ']' after loop condition");
+    consume(TokenKind::Punctuation, "[", "expected '[' before loop body");
+    auto body = std::make_unique<BlockExpr>();
+    body->body = parseBlockStatements();
+    consume(TokenKind::Punctuation, "]", "expected ']' after loop body");
     loop->body = std::move(body);
     return loop;
+}
+
+std::unique_ptr<Expression> Parser::parseEachExpression() {
+    auto each = std::make_unique<EachExpr>();
+    consume(TokenKind::Identifier, "each", "expected 'each'");
+    consume(TokenKind::Operator, "->", "expected '->' after each");
+    consume(TokenKind::Punctuation, "[", "expected '[' for item binding");
+    consume(TokenKind::Operator, "~", "expected '~' before item name");
+    consume(TokenKind::Identifier, "expected item name");
+    each->itemName = previous().text;
+    consume(TokenKind::Punctuation, "]", "expected ']' after item binding");
+    
+    consume(TokenKind::Punctuation, "[", "expected '[' before each body");
+    auto body = std::make_unique<BlockExpr>();
+    body->body = parseBlockStatements();
+    consume(TokenKind::Punctuation, "]", "expected ']' after each body");
+    each->body = std::move(body);
+    
+    return each;
 }
 
 std::vector<std::unique_ptr<Statement>> Parser::parseBlockStatements() {

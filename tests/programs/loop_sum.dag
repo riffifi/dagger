@@ -1,7 +1,7 @@
 ~ i :: int = 0
 ~ total :: int = 0
 
-loop [i -> lt(6)] block [
+loop [i -> lt(6)] [
   total -> add(i) -> total
   i -> add(1) -> i
 ]

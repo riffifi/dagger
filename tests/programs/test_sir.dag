@@ -1,0 +1,7 @@
+~ x :: int @rax = 10
+!x -> out.writeln
+
+block [
+  ~ y = 20
+  y -> out.writeln
+]

@@ -1,0 +1,8 @@
+@extern @fn putchar [~ c :: int] => int
+
+72 -> putchar # 'H'
+101 -> putchar # 'e'
+108 -> putchar # 'l'
+108 -> putchar # 'l'
+111 -> putchar # 'o'
+10 -> putchar # '\n'

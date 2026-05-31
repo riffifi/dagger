@@ -1,5 +1,6 @@
 #pragma once
 
+#include "types.h"
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@ struct Statement : AstNode {
 };
 
 struct Expression : AstNode {
+    TypeInfo inferredType = TypeInfo::unknown();
 };
 
 struct Program : AstNode {
@@ -32,12 +34,12 @@ struct IdentifierExpr : Expression {
 };
 
 struct PrefixExpr : Expression {
-    std::string op;
+    std::string op; // ?, !, & , *
     std::unique_ptr<Expression> right;
 };
 
 struct ProbeCompareExpr : Expression {
-    std::string op;
+    std::string op; // ?=, ?> etc.
     std::unique_ptr<Expression> right;
 };
 
@@ -69,7 +71,8 @@ struct RouteExpr : Expression {
     std::vector<std::unique_ptr<Expression>> stages;
 };
 
-struct FieldExpr : Expression {
+struct BlockExpr : Expression {
+    std::string name; // documentary name e.g. block.setup
     std::optional<std::string> inputName;
     std::optional<std::string> inputTypeName;
     std::vector<std::unique_ptr<Statement>> body;
@@ -89,6 +92,12 @@ struct LoopExpr : Expression {
     std::unique_ptr<Expression> body;
 };
 
+struct EachExpr : Expression {
+    std::unique_ptr<Expression> source;
+    std::string itemName;
+    std::unique_ptr<Expression> body;
+};
+
 struct WildcardExpr : Expression {
 };
 
@@ -97,27 +106,29 @@ struct StreamDecl : Statement {
     std::vector<std::string> names;
     std::optional<std::string> typeName;
     std::vector<std::unique_ptr<Expression>> initializers;
+    std::optional<std::string> registerPin;
 };
 
-struct GateParam {
+struct FunctionParam {
     std::string name;
     std::optional<std::string> typeName;
 };
 
-struct ShapeField {
+struct TypeField {
     std::string name;
     std::optional<std::string> typeName;
 };
 
-struct ShapeDecl : Statement {
+struct TypeDecl : Statement {
     std::string name;
-    std::vector<ShapeField> fields;
+    std::vector<TypeField> fields;
+    bool isUnion = false;
 };
 
-struct GateDecl : Statement {
+struct FunctionDecl : Statement {
     std::string name;
-    std::vector<std::string> annotations;
-    std::vector<GateParam> params;
+    std::vector<std::string> annotations; // @inline, @extern, @comptime, @private
+    std::vector<FunctionParam> params;
     std::optional<std::string> resultType;
     std::unique_ptr<Expression> body;
 };
@@ -129,6 +140,11 @@ struct ExprStmt : Statement {
 struct UseDecl : Statement {
     std::string moduleName;
     std::vector<std::string> importedNames;
+};
+
+struct DirectiveStmt : Statement {
+    std::string directive;
+    std::vector<std::unique_ptr<Expression>> arguments;
 };
 
 } // namespace dagger

@@ -2,6 +2,7 @@
 
 #include "ast.h"
 #include "token.h"
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,21 +16,22 @@ public:
 private:
     const Token& peek() const;
     const Token& previous() const;
+    const Token& peekNext() const;
     bool isAtEnd() const;
     const Token& advance();
-    const Token& peekNext() const;
+    bool check(TokenKind kind, std::string_view text = "") const;
     bool checkAt(size_t offset, TokenKind kind, std::string_view text = "") const;
     bool match(TokenKind kind, std::string_view text = "");
-    bool check(TokenKind kind, std::string_view text = "") const;
-    bool isShapeBracketSuffix() const;
-    void consume(TokenKind kind, std::string_view text, const char* message);
     void consume(TokenKind kind, const char* message);
+    void consume(TokenKind kind, std::string_view text, const char* message);
 
     std::unique_ptr<Statement> parseStatement();
     std::unique_ptr<Statement> parseUseDecl();
-    std::unique_ptr<Statement> parseStreamDecl(bool isStatic = false);
-    std::unique_ptr<Statement> parseShapeDecl();
-    std::unique_ptr<Statement> parseGateDecl(std::vector<std::string> annotations);
+    std::unique_ptr<Statement> parseStreamDecl(bool isStatic);
+    std::unique_ptr<Statement> parseTypeDecl();
+    std::unique_ptr<Statement> parseFunctionDecl(std::vector<std::string> annotations);
+    std::unique_ptr<Statement> parseDirectiveStmt();
+
     std::unique_ptr<Expression> parseExpression();
     std::unique_ptr<Expression> parseSingleExpression();
     std::unique_ptr<Expression> parseRoute();
@@ -38,15 +40,19 @@ private:
     std::unique_ptr<Expression> parseCall();
     std::unique_ptr<Expression> finishCall(std::unique_ptr<Expression> callee);
     std::unique_ptr<Expression> parsePrimary();
-    std::unique_ptr<Expression> parseFieldExpression();
-    std::unique_ptr<Expression> parseFieldExpressionFromBracket();
+    std::unique_ptr<Expression> parseBlockExpression();
+    std::unique_ptr<Expression> parseBlockExpressionFromBracket(std::string name = "");
     std::unique_ptr<Expression> parseStructLiteralFromBracket();
     std::unique_ptr<Expression> parseForkExpression();
     std::unique_ptr<Expression> parseLoopExpression();
-    std::string parseShape();
-    GateParam parseGateParam();
-    ShapeField parseShapeField();
+    std::unique_ptr<Expression> parseEachExpression();
+
     std::vector<std::unique_ptr<Statement>> parseBlockStatements();
+    std::string parseType();
+    FunctionParam parseFunctionParam();
+    TypeField parseTypeField();
+
+    bool isTypeBracketSuffix() const;
 
 private:
     std::vector<Token> tokens_;

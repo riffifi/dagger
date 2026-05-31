@@ -113,7 +113,12 @@ Token Lexer::scanIdentifier() {
         advance();
     }
     std::string text(source_.substr(start, current_ - start));
-    TokenKind kind = isKeyword(text) ? TokenKind::Keyword : TokenKind::Identifier;
+    TokenKind kind = TokenKind::Identifier;
+    if (isKeyword(text)) {
+        kind = TokenKind::Keyword;
+    } else if (isDirective(text)) {
+        kind = TokenKind::Keyword;
+    }
     return makeToken(kind, std::move(text));
 }
 
@@ -123,7 +128,11 @@ Token Lexer::scanAtIdentifier() {
         advance();
     }
     std::string text(source_.substr(start, current_ - start));
-    return makeToken(TokenKind::Identifier, std::move(text));
+    TokenKind kind = TokenKind::Identifier;
+    if (isDirective(text)) {
+        kind = TokenKind::Keyword;
+    }
+    return makeToken(kind, std::move(text));
 }
 
 Token Lexer::scanNumber() {

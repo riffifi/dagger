@@ -12,7 +12,7 @@
 2. [Design Philosophy](#2-design-philosophy)
 3. [Lexical Structure](#3-lexical-structure)
 4. [Core Concepts](#4-core-concepts)
-5. [Variables and Values](#5-variables-and-values)
+5. [Streams (Variables)](#5-streams-variables)
 6. [Types](#6-types)
 7. [Functions](#7-functions)
 8. [Routing Operator](#8-routing-operator)
@@ -22,7 +22,7 @@
 12. [Built-in Functions](#12-built-in-functions)
 13. [Error Handling](#13-error-handling)
 14. [Modules](#14-modules)
-15. [Compile-time Functions (Macros)](#15-compile-time-functions-macros)
+15. [Compile-time Functions](#15-compile-time-functions)
 16. [Assembly Mapping](#16-assembly-mapping)
 17. [Grammar (EBNF)](#17-grammar-ebnf)
 18. [Standard Library](#18-standard-library)
@@ -39,17 +39,12 @@ Where most languages model programs as collections of objects or sequences of in
 
 Dagger is not a high-level language with an assembly backend. It is an assembly language with a humane syntax.
 
-Terminology note:
-- This spec now prefers conventional terms in prose: `function`, `block`, and `type`
-- The preferred spellings are `@fn`, `block`, and `@type`
-- `loop` is the standard loop keyword; the older `pulse` name is removed from this spec
-
 ### Goals
 
 - Every line of Dagger source corresponds to a predictable, auditable sequence of assembly instructions
 - No hidden allocations, no implicit copies, no surprise destructor calls
 - Readable left-to-right data flow with the `->` routing operator
-- Shape inference that requires zero annotations for straightforward code
+- Type inference that requires zero annotations for straightforward code
 - Explicit memory ownership without a borrow checker — the programmer is trusted
 - Compile to a single flat binary with no dependencies
 
@@ -58,7 +53,7 @@ Terminology note:
 - Garbage collection
 - A standard runtime or VM
 - Object-oriented dispatch (no vtables, no inheritance)
-- Exceptions (Dagger uses error shapes instead)
+- Exceptions (Dagger uses typed error values instead)
 - Cross-platform abstraction (target is x86-64; other architectures are future work)
 
 ---
@@ -67,7 +62,7 @@ Terminology note:
 
 ### 2.1 Data Has Direction
 
-In Dagger, data always moves in one direction: left to right through the `->` operator. You do not hide control flow behind implicit dispatch; you route a value through an explicit function. This isn't just aesthetic. It forces the programmer to think about what data is entering a transform and what type it has when it exits.
+In Dagger, data always moves in one direction: left to right through the `->` operator. You do not hide control flow behind implicit dispatch; you route a value through an explicit function. This forces the programmer to think about what data is entering a transform and what type it has when it exits.
 
 ```dagger
 ~ score :: int = 72
@@ -76,19 +71,19 @@ score -> validate -> rank -> out.write
 
 This reads exactly like what the CPU does: load score, pass it to validate, pass the result to rank, write the final output.
 
-### 2.2 Values and Variables
+### 2.2 Probe vs Burst
 
-Classical variables are locations. In Dagger, values move through explicit operations. A value has a type, a lifetime, and a consumption model (probe vs burst). This distinction matters because reading a value and consuming it are different assembly operations — Dagger makes you say which you mean.
+Reading a value and consuming it are different assembly operations — Dagger makes you say which you mean. `?x` probes `x` (non-consuming read). `!x` bursts `x` (reads and frees it). This distinction is explicit in every use of a stream.
 
 ### 2.3 Explicit Scope
 
-Scope in Dagger is physical. `[ ]` brackets define a block — a spatial region where values exist. When execution leaves a block, everything declared inside it is freed. This maps directly to stack frame entry and exit. There is no garbage collector because there is no garbage — everything has a declared home.
+Scope in Dagger is physical. `[ ]` brackets define a block — a region where streams are declared and owned. When execution leaves a block, everything declared inside it is freed. This maps directly to stack frame entry and exit. There is no garbage collector because there is no garbage — everything has a declared home.
 
-### 2.4 Type Inference Over Type Declarations
+### 2.4 Type Inference
 
-Dagger does not require explicit type declarations everywhere. It uses **types** that describe what a value looks like and how it can be routed. Types are inferred from usage wherever possible. You annotate when you want to be explicit or when the compiler cannot infer.
+Dagger does not require explicit type annotations everywhere. Types are inferred from literals, function output types, and routing chain context. You annotate when you want to be explicit or when the compiler cannot infer.
 
-### 2.5 Explicit Is Better Than Magic
+### 2.5 No Hidden Costs
 
 If memory is allocated, you can see it. If a copy happens, you caused it. If something is freed, you wrote `@burst` or exited a block. There are no implicit operations in Dagger. Every assembly instruction has a visible reason in the source.
 
@@ -102,19 +97,21 @@ If memory is allocated, you can see it. If a copy happens, you caused it. If som
 # this is a single-line comment
 ```
 
-There are no multi-line comments. Long explanations belong in documentation, not source.
+There are no multi-line comments.
 
-### 3.2 Whitespace
+### 3.2 Whitespace and Statements
 
-Whitespace is not significant for parsing (Dagger is not indentation-sensitive) but convention is two-space indentation inside blocks. Newlines separate statements. Multiple statements on one line are separated by `;`.
+Whitespace is not significant for parsing (Dagger is not indentation-sensitive). Convention is two-space indentation inside blocks. Newlines separate statements. Multiple statements on one line are separated by `;`.
 
 ### 3.3 Identifiers
 
-Identifiers begin with a letter or underscore, followed by any combination of letters, digits, underscores, or dots. Dots are used for namespacing within identifiers (e.g. `out.write`, `mem.alloc`).
+Identifiers begin with a letter or underscore, followed by letters, digits, underscores, or dots. Dots namespace identifiers (e.g. `out.write`, `mem.alloc`).
 
 ```
 identifier ::= [a-zA-Z_][a-zA-Z0-9_.]*
 ```
+
+**Name collision rule:** if a user module shares a name with a built-in namespace (e.g. a module named `text`), the module name takes precedence and the built-in is accessed via its full qualified path. The compiler emits a warning when this occurs.
 
 ### 3.4 Literals
 
@@ -143,7 +140,7 @@ identifier ::= [a-zA-Z_][a-zA-Z0-9_.]*
 true
 false
 
-# null stream
+# null (absence of value — see section 6.5)
 null
 ```
 
@@ -152,25 +149,28 @@ null
 | Operator | Meaning |
 |----------|---------|
 | `->` | Route (data flows right) |
-| `=>` | Function result type declaration |
-| `::` | Type bind |
+| `=>` | Function return type annotation |
+| `::` | Type annotation |
 | `=` | Stream initialisation |
 | `?` | Probe (non-consuming read) |
-| `!` | Burst (consuming read, immediate free) |
-| `?>` `?<` `?>=` `?<=` `?=` `?!=` | Probe comparisons |
-| `@` | Gate/directive prefix |
-| `_` | Wildcard / catch-all |
+| `!` | Burst (consuming read + free) |
+| `>>` | Function composition |
+| `@` | Directive prefix |
+| `_` | Wildcard / discard |
 | `..` | Range |
-| `[n]` | Offset access |
+| `[n]` | Index access |
 | `,` | Multi-stream separator |
-| `&` | Stream reference (borrow address) |
+| `&` | Address-of |
 | `*` | Dereference |
+
+**Note:** the probe comparisons `?>`, `?<`, `?>=`, `?<=`, `?=`, `?!=` used inside `fork` arms are **not** standalone operators. They are part of the `fork` arm syntax and are only valid there. See Section 9.1.
 
 ### 3.6 Keywords
 
 ```
-~ @fn @type @burst @pin @static @extern @inline @comptime
-loop fork block null true false
+~ @fn @type @burst @static @extern @inline @comptime @private @use
+@syscall @error @bubble @or @ok @err @break @skip
+loop fork block each tee null true false
 ```
 
 ---
@@ -181,15 +181,15 @@ loop fork block null true false
 
 Everything in Dagger is built from three primitives:
 
-| Primitive | Symbol | What it is |
-|-----------|--------|-----------|
-| Stream | `~` | A named, shaped flow of data |
-| Function | `@fn` | A named transform that accepts and emits values |
-| Block | `[ ]` | A spatial scope that owns values |
+| Primitive | Syntax | What it is |
+|-----------|--------|------------|
+| Stream | `~ name` | A named, typed value with an explicit lifetime |
+| Function | `@fn name` | A named transform: takes inputs, emits output |
+| Block | `[ ]` | A scope that owns all streams declared inside it |
 
 ### 4.2 The Routing Operator
 
-`->` is the single most important operator in Dagger. It routes the output of the left-hand side into the input of the right-hand side. It chains. It composes. It is the spine of every program.
+`->` is the central operator in Dagger. It routes the output of the left-hand side into the input of the right-hand side.
 
 ```dagger
 source -> transform -> sink
@@ -197,7 +197,7 @@ source -> transform -> sink
 
 ### 4.3 Execution Model
 
-A `.dag` file's top-level statements form the program entry. There is no `main()` function. The file is the program. Execution starts at the first statement and follows routing operators forward.
+A `.dag` file's top-level statements form the program entry. There is no `main()` function. Execution starts at the first statement and proceeds top to bottom, following routing operators.
 
 ```dagger
 # this is a complete, valid Dagger program
@@ -206,35 +206,44 @@ A `.dag` file's top-level statements form the program entry. There is no `main()
 
 ---
 
-## 5. Variables and Values
+## 5. Streams (Variables)
+
+A **stream** is a named, typed value with an explicit lifetime. Streams are declared with `~`.
 
 ### 5.1 Declaration
 
 ```dagger
-~ name :: type = value
-~ name :: type          # uninitialized (must be written before probed)
-~ name = value          # type inferred
+~ name :: type = value    # explicit type, initialised
+~ name :: type            # explicit type, uninitialised (must be written before probed)
+~ name = value            # type inferred from value
 ```
 
 ### 5.2 Probe vs Burst
 
+There are two ways to read a stream:
+
 ```dagger
 ~ x :: int = 10
 
-?x              # probe: reads x, x still exists, compiles to: mov rax, [x]
-!x              # burst: reads x, x is freed, compiles to: mov rax, [x] ; (stack: adjust sp)
+?x    # PROBE: reads x without consuming it. x still exists after this.
+      # compiles to: mov rax, [x]
+
+!x    # BURST: reads x and frees it. x no longer exists after this.
+      # compiles to: mov rax, [x]  (then x's stack slot is reclaimed)
 ```
 
-Probing a stream does not advance or consume it. Bursting a stream consumes it — after a burst, the stream is gone and any subsequent access is a compile error.
+After a burst, any further use of `x` is a **compile error**. The compiler tracks burst state statically.
 
-### 5.3 Variable Reassignment By Routing
+Probing through a reference does not free the referenced value. See Section 10.6.
+
+### 5.3 Reassignment by Routing
 
 ```dagger
 ~ x :: int = 5
-x -> add(1) -> x    # route x through a function, result back into x
+x -> add(1) -> x    # route x through add(1), result stored back into x
 ```
 
-Re-routing into the same stream is an in-place update. The compiler emits a single register operation.
+Routing a value back into the same stream is an in-place update. The compiler emits a single register operation.
 
 ### 5.4 Multi-stream Declaration
 
@@ -242,13 +251,15 @@ Re-routing into the same stream is an in-place update. The compiler emits a sing
 ~ a, b, c :: int = 1, 2, 3
 ```
 
+All streams on the left share the same type. The right-hand side must supply exactly as many values.
+
 ### 5.5 Register Pinning
 
 ```dagger
-~ counter :: int @rax    # compiler must store counter in rax
+~ counter :: int @rax    # compiler must keep counter in rax
 ```
 
-Pins a stream to a specific x86-64 register. Useful for system calls, intrinsics, and performance-critical paths. The compiler will error if the register is unavailable at that point.
+Pins a stream to a specific x86-64 register. The compiler emits an error if the register is unavailable at the pin point. Useful for syscalls and ABI-sensitive code.
 
 ### 5.6 Static Streams
 
@@ -256,43 +267,47 @@ Pins a stream to a specific x86-64 register. Useful for system calls, intrinsics
 @static ~ pi :: float = 3.14159
 ```
 
-Stored in the `.data` or `.rodata` section. Exists for the lifetime of the program.
+Stored in `.data` or `.rodata`. Exists for the lifetime of the program. Cannot be burst.
 
 ---
 
 ## 6. Types
 
-Types describe the contract of a value — what it looks like in memory and what functions it can be routed into. Types are inferred wherever possible.
-
 ### 6.1 Primitive Types
 
 | Type | Size | Description |
-|-------|------|-------------|
-| `int` | 64-bit | Signed integer (default) |
+|------|------|-------------|
+| `int` | 64-bit | Signed integer |
 | `int8` `int16` `int32` `int64` | explicit | Sized signed integers |
 | `uint` `uint8` `uint16` `uint32` `uint64` | explicit | Unsigned integers |
 | `float` | 64-bit | IEEE 754 double |
 | `float32` | 32-bit | IEEE 754 single |
-| `bool` | 1 byte | true / false |
+| `bool` | 1 byte | `true` or `false` |
 | `byte` | 8-bit | Raw byte |
-| `text` | ptr+len | UTF-8 string slice (pointer + length, no null terminator) |
-| `char` | 32-bit | Unicode code point |
-| `null` | 0 bytes | Absence of value |
+| `text` | ptr+len | UTF-8 string (fat pointer: address + byte length, no null terminator) |
+| `char` | 32-bit | Unicode code point (UTF-32) |
 
 ### 6.2 Composite Types
 
-#### Block (fixed-size buffer)
+#### Fixed-size buffer (`block[N]`)
+
 ```dagger
-~ buf :: block[256]        # 256 bytes on stack
-~ buf :: block[256] @heap  # 256 bytes on heap
+~ buf :: block[256]        # 256 bytes, stack allocated
+~ buf :: block[256] @heap  # 256 bytes, heap allocated
 ```
 
-#### Slice (pointer + length)
+`block[N]` is a raw byte buffer of exactly N bytes. N must be a compile-time constant.
+
+#### Slice (`slice[T]`)
+
 ```dagger
-~ items :: slice[int]      # dynamic-length sequence of ints
+~ items :: slice[int]    # fat pointer: (address, element count)
 ```
 
-#### Struct type
+A slice does not own its memory. It is a view into a `block` or heap buffer. See Section 10.7.
+
+#### Struct (`@type`)
+
 ```dagger
 @type Point [
     x :: float
@@ -303,7 +318,10 @@ Types describe the contract of a value — what it looks like in memory and what
 p.x -> out.write
 ```
 
-#### Union type
+#### Union (`@type` with variants)
+
+A union type holds exactly one of its listed variants at a time.
+
 ```dagger
 @type Num [
     | int
@@ -311,50 +329,89 @@ p.x -> out.write
 ]
 ```
 
+**Constructing a union value:**
+
+```dagger
+~ n :: Num = int(42)      # construct the int variant
+~ m :: Num = float(3.14)  # construct the float variant
+```
+
+**Matching on a union value:**
+
+```dagger
+n -> fork [
+    int   -> [~ v :: int]   [ v -> out.write ]
+    float -> [~ v :: float] [ v -> out.write ]
+]
+```
+
+Union arms in `fork` match on the variant name, not a probe comparison. The matched value is bound in the block input.
+
 #### Function type
+
 ```dagger
 ~ transform :: fn(int -> int)
 ```
 
-#### Optional type
+Stores a reference to any function that takes one `int` and returns one `int`. See Section 7.6.
+
+#### Optional type (`T?`)
+
 ```dagger
-~ maybe :: int?            # int or null
+~ maybe :: int?    # holds either an int or null
 ```
 
-#### Error type
+`null` is the only valid "no value" representation. The `?` suffix is the only way to declare a stream that may be `null` — non-optional streams can never hold `null`.
+
+#### Error type (`T!err`)
+
 ```dagger
-~ result :: int!err        # int or an error — see section 13
+~ result :: int!err    # holds either an int or an error value
 ```
 
-### 6.3 Type Inference
+See Section 13.
 
-The compiler infers types from:
-- Literal values (`42` infers `int`, `3.14` infers `float`, `"x"` infers `text`)
-- Function output types
-- Routing chain context
+### 6.3 The `null` Value
 
-When inference is ambiguous, the compiler emits a descriptive error asking for an explicit annotation.
+`null` represents the absence of a value. Its type is `null`. It can be assigned only to optional streams (`T?`) or used as the return type of functions that produce no useful output.
 
-### 6.4 Type Casting
+```dagger
+~ x :: int? = null    # valid: x is optional
+~ y :: int  = null    # COMPILE ERROR: int is not optional
+```
+
+### 6.4 Type Inference Rules
+
+The compiler infers types using the following rules, applied in order:
+
+1. **Literal:** `42` → `int`, `3.14` → `float`, `"x"` → `text`, `true`/`false` → `bool`, `null` → `null`
+2. **Function output:** the stream receives the declared output type of the function it was routed from
+3. **Routing context:** if the destination function has a known input type, that type propagates back
+
+If inference is ambiguous after these rules, the compiler emits an error requesting an explicit `::` annotation.
+
+### 6.5 Type Casting
 
 ```dagger
 ~ x :: int = 65
-x -> cast(char) -> out.write    # routes x through cast, output type is char
+x -> cast(char) -> out.write    # output type is char
 ```
 
-Casts are explicit function calls, never implicit. Narrowing casts that could lose data require `cast.unsafe`.
+Casts are explicit function calls. Widening casts (e.g. `int32` to `int64`) use `cast`. Narrowing casts that may lose data require `cast.unsafe`.
 
 ---
 
 ## 7. Functions
 
-Functions are the transformation units of Dagger. A function accepts one or more input values, transforms them, and emits an output value. Functions do not "execute" in isolation — data is *routed through* them.
+A function takes one or more input streams, transforms them, and emits an output value. Data is *routed through* a function — functions do not execute in isolation.
 
-### 7.1 Function Declaration
+### 7.1 Declaration
 
 ```dagger
-@fn name [inputs] => output_type [
-    # body: last expression is the output
+@fn name [~ param :: type, ...] => return_type [
+    # body
+    # the last expression in the body is the return value
+    # no return keyword
 ]
 ```
 
@@ -364,16 +421,16 @@ Functions are the transformation units of Dagger. A function accepts one or more
 ]
 ```
 
-The body of a function is a block. The last routed value in the block is the function's output. No `return` keyword.
-
 ### 7.2 Multiple Inputs
+
+Inputs are declared as a comma-separated parameter list. At the call site, values are supplied left to right in the same order.
 
 ```dagger
 @fn add_scaled [~ a :: int, ~ b :: int, ~ factor :: int] => int [
     b -> mul(factor) -> add(a)
 ]
 
-3, 4, 2 -> add_scaled -> out.write    # outputs 11
+3, 4, 2 -> add_scaled -> out.write    # a=3, b=4, factor=2, outputs 11
 ```
 
 ### 7.3 Multiple Outputs
@@ -386,6 +443,8 @@ The body of a function is a block. The last routed value in the block is the fun
 
 ~ lo, hi = 5, 9 -> minmax
 ```
+
+The output list is comma-separated. The receiving declaration must have exactly as many names as output values.
 
 ### 7.4 Recursive Functions
 
@@ -406,33 +465,47 @@ The body of a function is a block. The last routed value in the block is the fun
 ]
 ```
 
-`@inline` instructs the compiler to inline the function body at every call site. No `call` instruction is emitted.
+`@inline` causes the compiler to substitute the function body at every call site. No `call` instruction is emitted.
 
 ### 7.6 First-class Functions
 
-Functions are values. They can be stored, passed, and routed.
+A function can be stored in a stream and routed through like any other value. The function type `fn(A -> B)` describes a function taking one input of type `A` and returning type `B`.
 
 ```dagger
 ~ op :: fn(int -> int) = double
 
-5 -> op -> out.write    # outputs 10
+5 -> op -> out.write    # indirect call; compiles to: call [op]
 ```
+
+**Multi-parameter function type:**
+
+```dagger
+~ combiner :: fn(int, int -> int) = add_scaled
+```
+
+A function value holds only a pointer to the function. It does not capture any surrounding state. If you need to carry state with a function, use partial application (Section 7.8).
 
 ### 7.7 Function Composition
 
+`>>` composes two functions into a new function value. The output type of the left must match the input type of the right.
+
 ```dagger
-~ pipeline = double >> square    # compose: double then square
-5 -> pipeline -> out.write       # outputs 100
+~ pipeline :: fn(int -> int) = double >> square
+5 -> pipeline -> out.write    # outputs 100
 ```
 
-`>>` composes two functions into one. The output type of the left function must match the input type of the right function.
+The composed function is created at compile time when both operands are known function names. The result is a plain function pointer — no hidden allocation.
 
 ### 7.8 Partial Application
 
+Calling a multi-parameter built-in with fewer arguments than it expects produces a partially applied function value.
+
 ```dagger
-~ add5 = add(5)    # partially apply add with second arg = 5
-3 -> add5          # outputs 8
+~ add5 :: fn(int -> int) = add(5)    # fixes second argument of add to 5
+3 -> add5                             # outputs 8
 ```
+
+The captured argument is stored inline in a compiler-generated wrapper function in `.text`. No heap allocation occurs. Partial application is only valid for built-in functions and `@fn` declarations in the current compilation unit — it is not valid for `@extern` or function-pointer values.
 
 ---
 
@@ -444,30 +517,33 @@ Functions are values. They can be stored, passed, and routed.
 source -> fn
 ```
 
+Routes the value `source` into function `fn`. The result is the output of `fn`.
+
 ### 8.2 Chained Routing
 
 ```dagger
 source -> fn_a -> fn_b -> fn_c
 ```
 
-Left-associative. Each function's output becomes the next function's input.
+Left-associative. Equivalent to `fn_c(fn_b(fn_a(source)))`.
 
 ### 8.3 Routing Into a Stream
 
 ```dagger
-source -> fn -> ~ result
-# or into an existing stream:
-source -> fn -> result
+source -> fn -> ~ result       # declare new stream, type inferred from fn's output
+source -> fn -> result         # store result into existing stream
 ```
 
 ### 8.4 Routing Into a Block
 
 ```dagger
-source -> block [
-    # source is available here as the block's input value
-    # last expression exits the block as output
+source -> block [~ n :: type] [
+    # n holds the routed value
+    # last expression is the block's output
 ]
 ```
+
+The block input parameter `[~ n :: type]` is required when routing a value into a block. The type annotation is optional if it can be inferred. See Section 11.4.
 
 ### 8.5 Routing Multiple Streams
 
@@ -475,19 +551,21 @@ source -> block [
 a, b -> fn_that_takes_two
 ```
 
+The comma-separated values are passed to the function's parameters left to right.
+
 ### 8.6 Discarding Output
 
 ```dagger
-source -> fn -> _    # route to wildcard: output discarded
+source -> fn -> _    # output discarded; compiles to nothing after the call
 ```
 
-### 8.7 Tee Routing (split without consuming)
+### 8.7 Tee Routing
 
 ```dagger
 source -> tee(log.write) -> next_fn
 ```
 
-`tee` probes the value, routes a copy to its argument function, and passes the original forward unchanged.
+`tee` probes the value (non-consuming), routes a copy to the argument function, and passes the original forward unchanged. Useful for logging and debugging without breaking a pipeline.
 
 ---
 
@@ -495,19 +573,39 @@ source -> tee(log.write) -> next_fn
 
 ### 9.1 Fork (Branching)
 
-`fork` routes the input stream into the first matching arm. Arms are checked top to bottom.
+`fork` routes the input value into the first arm whose condition matches. Arms are checked top to bottom. The first match wins; remaining arms are not evaluated.
+
+**Syntax:**
 
 ```dagger
 value -> fork [
-    ?= 0    -> "zero"   -> out.write
-    ?> 0    -> "pos"    -> out.write
-    _       -> "neg"    -> out.write
+    arm_condition -> routing_chain
+    arm_condition -> routing_chain
+    _             -> routing_chain    # catch-all; matches anything
 ]
 ```
 
-Each arm is a probe condition followed by `->` and a routing chain. The `_` arm is the catch-all. If no arm matches and there is no `_`, the compiler emits a warning (not an error — Dagger trusts you).
+An arm condition is one of:
 
-Fork with no output (all arms are sinks):
+| Condition form | Meaning |
+|---|---|
+| `?= literal` | input equals literal |
+| `?!= literal` | input does not equal literal |
+| `?> literal` | input greater than literal |
+| `?< literal` | input less than literal |
+| `?>= literal` | input greater than or equal to literal |
+| `?<= literal` | input less than or equal to literal |
+| `@ok` | input is a success value (for `T!err` types) |
+| `@err` | input is an error value (for `T!err` types) |
+| `TypeName` | input holds this variant (for union types) |
+| `_` | always matches (catch-all) |
+
+The `?` prefix in conditions is part of the `fork` arm syntax. It does not mean "probe" in this context — it means "test the routed value against this condition." Probe (`?x`) and burst (`!x`) as used in Section 5.2 are stream-prefix operators, not fork conditions.
+
+If no arm matches and there is no `_` catch-all, the compiler emits a warning.
+
+**Fork with no output** (all arms are sinks):
+
 ```dagger
 x -> fork [
     ?> 100  -> handle_overflow
@@ -515,21 +613,40 @@ x -> fork [
 ]
 ```
 
-Fork with output (all arms must emit the same type):
+**Fork with output** (all arms must emit the same type; the result can be stored):
+
 ```dagger
-~ label = x -> fork [
+~ label :: text = x -> fork [
     ?>= 90  -> "excellent"
     ?>= 60  -> "passing"
     _       -> "fail"
 ]
 ```
 
-### 9.2 Loop
-
-`loop` repeats its body block while its condition expression evaluates to `true`.
+**Fork on a union type** (see Section 6.2):
 
 ```dagger
-loop [condition] block [
+n -> fork [
+    int   -> [~ v :: int]   [ v -> out.write ]
+    float -> [~ v :: float] [ v -> out.write ]
+]
+```
+
+**Fork on an error type** (see Section 13):
+
+```dagger
+val -> fork [
+    @ok  -> [~ n] [ n -> out.write ]
+    @err -> [~ e] [ e -> out.write_err ]
+]
+```
+
+### 9.2 Loop
+
+`loop` repeats its body while its condition is true. Both the condition and the body are enclosed in `[ ]`. The `block` keyword is not used here.
+
+```dagger
+loop [condition_expression] [
     # body
 ]
 ```
@@ -537,26 +654,27 @@ loop [condition] block [
 ```dagger
 ~ i :: int = 0
 
-loop [i -> lt(10)] block [
+loop [i -> lt(10)] [
     i -> out.write
     i -> add(1) -> i
 ]
 ```
 
-The condition is evaluated on each iteration. The body is a full block — values declared inside are freed on each iteration.
+The condition is re-evaluated on each iteration. Values declared inside the body are freed at the end of each iteration.
 
-Loop with index:
+**Loop with range:**
+
 ```dagger
-loop.range(0, 10) -> block [~ i] [
+loop.range(0, 10) -> [~ i] [
     i -> out.write
 ]
 ```
 
-`loop.range` is a built-in that emits an int stream incrementing from start to end (exclusive).
+`loop.range(start, end)` produces an `int` stream that increments from `start` to `end - 1` (exclusive). The value is bound via the block input syntax `[~ i]`.
 
-### 9.3 Each (Iteration)
+### 9.3 Each (Slice Iteration)
 
-Route a slice through `each` to iterate its elements:
+`each` iterates the elements of a slice one by one.
 
 ```dagger
 ~ nums :: slice[int] = [1, 2, 3, 4, 5]
@@ -566,12 +684,17 @@ nums -> each -> [~ n] [
 ]
 ```
 
+Each element is bound via the block input syntax `[~ n]`. The type of `n` is inferred as the element type of the slice.
+
 ### 9.4 Break and Skip
 
-Inside a `loop` or `each` block:
+`@break` exits the nearest enclosing `loop` or `each` immediately.  
+`@skip` ends the current iteration and advances to the next.
+
+Both are valid only inside a `loop` or `each` body.
 
 ```dagger
-loop [i -> lt(100)] block [
+loop [i -> lt(100)] [
     i -> fork [
         ?= 50  -> @break
         _      -> i -> out.write
@@ -581,7 +704,6 @@ loop [i -> lt(100)] block [
 ```
 
 ```dagger
-# @skip advances to the next iteration
 nums -> each -> [~ n] [
     n -> fork [
         ?< 0  -> @skip
@@ -594,75 +716,78 @@ nums -> each -> [~ n] [
 
 ## 10. Memory Model
 
-Dagger has no garbage collector and no implicit allocation. All memory is either stack, static, or explicitly heap-allocated.
+Dagger has no garbage collector. All memory is stack-allocated, statically allocated, or explicitly heap-allocated.
 
 ### 10.1 Stack Allocation
 
-All values declared in a block live on the stack by default. They are freed when the block exits.
+All streams declared inside a block live on the stack by default. They are freed when the block exits.
 
 ```dagger
-~ x :: int = 42           # stack allocated, 8 bytes
-~ buf :: block[128]       # stack allocated, 128 bytes
+~ x :: int = 42        # 8 bytes on the stack
+~ buf :: block[128]    # 128 bytes on the stack
 ```
 
-The compiler tracks stack frame size at compile time and emits a single `sub rsp, N` on block entry.
+The compiler computes the total frame size at compile time and emits a single `sub rsp, N` on block entry and `add rsp, N` on exit.
 
 ### 10.2 Heap Allocation
 
+Adding `@heap` to a declaration allocates on the heap via the system allocator (`malloc` / `mmap` — the allocator is configurable via `std.mem`; see Section 18.2).
+
 ```dagger
-~ buf :: block[1024] @heap    # heap allocated
-~ arr :: slice[int] @heap     # heap-allocated slice
+~ buf :: block[1024] @heap    # 1024 bytes, heap allocated
+~ arr :: slice[int]  @heap    # heap-allocated slice
 ```
 
-Heap values must be explicitly freed with `@burst` or they will be freed on scope exit if inside a `block`. The compiler warns on unfreed heap values at the end of their declaring scope.
+The compiler emits a warning if a `@heap` stream reaches the end of its declaring scope without being freed.
 
 ### 10.3 Explicit Free
 
 ```dagger
-@burst buf     # frees buf, compiles to call free / or direct dealloc
+@burst buf    # frees buf; compiles to: mov rdi, [buf] / call free
 ```
 
-After `@burst`, the stream is gone. Any use after burst is a compile error.
+After `@burst`, `buf` is gone. Any subsequent use is a compile error. Freeing a stack-allocated stream with `@burst` is also valid — it marks the stream as dead before scope exit, and the compiler reclaims the stack slot if possible.
 
-### 10.4 Stack vs Heap Decision Guide
+### 10.4 Stack vs Heap
 
 | Use stack when | Use heap when |
 |----------------|---------------|
 | Size is known at compile time | Size is determined at runtime |
 | Lifetime matches the current block | Lifetime outlasts the current block |
-| Size is small (< a few KB) | Size is large |
+| Size is small (under a few KB) | Size is large |
 
 ### 10.5 Copies and Moves
 
 ```dagger
 ~ a :: int = 5
-~ b = a          # COPY: a and b both exist, compiles to mov rbx, rax
+~ b = a       # COPY: a and b both exist. compiles to: mov rbx, rax
 
-~ c = !a         # MOVE (burst): a is consumed, c gets the value, a is freed
+~ c = !a      # MOVE (burst): a is consumed, c gets the value, a is freed.
 ```
 
-Copies of primitive shapes are always cheap (single register move). Copies of blocks or slices copy the entire buffer — use references to avoid this.
+Copies of primitive types are always a single register move. Copies of `block` or `slice` values copy the entire buffer — use references to avoid this.
 
 ### 10.6 References
 
 ```dagger
 ~ x :: int = 10
-~ ref = &x           # ref holds the address of x, type: &int
+~ ref :: &int = &x      # ref holds the address of x
 
-ref -> deref         # dereference: reads value at ref's address
-*ref -> out.write    # shorthand dereference
+*ref -> out.write       # dereference: reads value at ref's address
 ```
 
-References do not have lifetime tracking (unlike Rust borrows). The programmer is responsible for ensuring the referenced stream outlives the reference.
+References have no lifetime tracking. The programmer is responsible for ensuring the referenced stream outlives the reference. Bursting the referenced stream while a live reference exists is not a compile error, but using the reference afterward is undefined behavior.
 
 ### 10.7 Slices
 
-A slice is a `(pointer, length)` pair. It does not own its memory — it describes a view into an existing buffer.
+A slice is a `(pointer, element_count)` pair. It does not own its memory — it is a view into a `block` or heap buffer.
 
 ```dagger
-~ buf :: block[256]
-~ view :: slice[byte] = buf[0..128]    # slice of first 128 bytes of buf
+~ buf  :: block[256]
+~ view :: slice[byte] = buf[0..128]    # view of the first 128 bytes of buf
 ```
+
+Slices become invalid if the underlying buffer is freed. The compiler does not track this — the programmer is responsible.
 
 ---
 
@@ -680,20 +805,20 @@ block [
 
 ### 11.2 Blocks as Expressions
 
-A block can produce an output value — the last routed expression in the block is its result:
+The last expression in a block is its output value. This can be captured into a stream.
 
 ```dagger
 ~ result = block [
     ~ a = 3
     ~ b = 4
-    a -> add(b)    # this is the block's output
+    a -> add(b)    # output of this block
 ]
 result -> out.write    # outputs 7
 ```
 
 ### 11.3 Named Blocks
 
-Blocks can be named for clarity (name has no semantic effect, only documentary):
+Blocks can be given a documentary name with no semantic effect:
 
 ```dagger
 block.setup [
@@ -707,14 +832,16 @@ block.main [
 
 ### 11.4 Block Inputs
 
+A block can receive a routed value as a named parameter:
+
 ```dagger
 ~ x = 10
-x -> block [~ n] [
+x -> block [~ n :: int] [
     n -> mul(2) -> out.write
 ]
 ```
 
-The routed value enters the block as the named value `n`.
+The type annotation `:: int` is optional when it can be inferred from the routed value. The parameter syntax `[~ n]` is only valid immediately before the body `[ ]` — it is not the same as a standalone `~ n` declaration.
 
 ---
 
@@ -722,35 +849,37 @@ The routed value enters the block as the named value `n`.
 
 ### 12.1 Arithmetic
 
-| Gate | Input | Output | Notes |
-|------|-------|--------|-------|
+| Function | Input | Output | Notes |
+|----------|-------|--------|-------|
 | `add(n)` | num | num | adds n |
 | `sub(n)` | num | num | subtracts n |
 | `mul(n)` | num | num | multiplies by n |
-| `div(n)` | num | num | integer or float division |
+| `div(n)` | num | num | divides by n |
 | `mod(n)` | int | int | modulo |
 | `neg` | num | num | negate |
 | `abs` | num | num | absolute value |
 | `min(n)` | num | num | minimum of input and n |
 | `max(n)` | num | num | maximum of input and n |
-| `pow(n)` | num | num | power |
+| `pow(n)` | num | num | raises to power n |
 
 ### 12.2 Bitwise
 
-| Gate | Notes |
-|------|-------|
-| `bit.and(n)` | bitwise AND |
-| `bit.or(n)` | bitwise OR |
-| `bit.xor(n)` | bitwise XOR |
-| `bit.not` | bitwise NOT |
-| `bit.shl(n)` | shift left by n |
-| `bit.shr(n)` | logical shift right |
-| `bit.sar(n)` | arithmetic shift right |
+| Function | Input | Output | Notes |
+|----------|-------|--------|-------|
+| `bit.and(n)` | int | int | bitwise AND |
+| `bit.or(n)` | int | int | bitwise OR |
+| `bit.xor(n)` | int | int | bitwise XOR |
+| `bit.not` | int | int | bitwise NOT |
+| `bit.shl(n)` | int | int | shift left by n bits |
+| `bit.shr(n)` | int | int | logical shift right by n bits |
+| `bit.sar(n)` | int | int | arithmetic shift right by n bits |
 
-### 12.3 Comparison (returns bool)
+### 12.3 Comparison
 
-| Gate | Notes |
-|------|-------|
+These return `bool`. They are used in routing chains, not in `fork` arm conditions.
+
+| Function | Notes |
+|----------|-------|
 | `eq(n)` | equal |
 | `neq(n)` | not equal |
 | `gt(n)` | greater than |
@@ -758,101 +887,138 @@ The routed value enters the block as the named value `n`.
 | `gte(n)` | greater than or equal |
 | `lte(n)` | less than or equal |
 
+```dagger
+~ is_positive :: bool = x -> gt(0)
+```
+
 ### 12.4 Logic
 
-| Gate | Notes |
-|------|-------|
+| Function | Notes |
+|----------|-------|
 | `and(b)` | logical AND |
 | `or(b)` | logical OR |
 | `not` | logical NOT |
 
 ### 12.5 Text
 
-| Gate | Input | Output | Notes |
-|------|-------|--------|-------|
+| Function | Input | Output | Notes |
+|----------|-------|--------|-------|
 | `text.len` | text | int | byte length |
-| `text.at(n)` | text | char | char at index n |
-| `text.slice(a,b)` | text | text | substring |
-| `text.join(t)` | text | text | concatenate |
-| `text.find(t)` | text | int? | find substring, null if not found |
-| `text.trim` | text | text | trim whitespace |
+| `text.at(n)` | text | char | char at byte index n |
+| `text.slice(a, b)` | text | text | substring from byte index a to b (exclusive) |
+| `text.join(t)` | text | text | concatenate with t |
+| `text.find(t)` | text | int? | byte index of first occurrence of t, or null |
+| `text.trim` | text | text | strip leading and trailing whitespace |
 | `text.split(sep)` | text | slice[text] | split by separator |
-| `text.from(n)` | num | text | format number as text |
+| `text.from` | num | text | format number as decimal text |
 
 ### 12.6 I/O
 
-| Gate | Input | Output | Notes |
-|------|-------|--------|-------|
+| Function | Input | Output | Notes |
+|----------|-------|--------|-------|
 | `out.write` | text | null | write to stdout |
-| `out.writeln` | text | null | write with newline |
+| `out.writeln` | text | null | write to stdout with trailing newline |
 | `out.write_err` | text | null | write to stderr |
-| `in.read` | null | text | read line from stdin |
-| `in.read_raw` | null | slice[byte] | read raw bytes |
-| `file.open(path)` | text | file!err | open file, returns handle or error |
-| `file.read` | file | text!err | read entire file |
+| `in.read` | null | text | read one line from stdin (strips newline) |
+| `in.read_raw` | null | slice[byte] | read raw bytes from stdin |
+| `file.open` | text | file!err | open file at path, return handle or error |
+| `file.read` | file | text!err | read entire file contents |
 | `file.write` | file, text | null!err | write text to file |
 | `file.close` | file | null | close file handle |
 
 ### 12.7 Memory
 
-| Gate | Notes |
-|------|-------|
-| `mem.alloc(n)` | allocate n bytes on heap, returns &byte |
-| `mem.realloc(ptr, n)` | resize allocation |
-| `mem.free(ptr)` | free heap pointer |
-| `mem.copy(src, dst, n)` | copy n bytes |
-| `mem.zero(ptr, n)` | zero n bytes |
+| Function | Notes |
+|----------|-------|
+| `mem.alloc(n)` | allocate n bytes on the heap; returns `&byte` |
+| `mem.realloc(ptr, n)` | resize an existing heap allocation |
+| `mem.free(ptr)` | free a heap pointer |
+| `mem.copy(src, dst, n)` | copy n bytes from src to dst |
+| `mem.zero(ptr, n)` | zero n bytes starting at ptr |
 
 ### 12.8 Math
 
-| Gate | Notes |
-|------|-------|
+| Function | Notes |
+|----------|-------|
 | `math.sqrt` | square root |
-| `math.floor` `math.ceil` `math.round` | rounding |
-| `math.sin` `math.cos` `math.tan` | trig |
-| `math.log` `math.log2` `math.log10` | logarithm |
+| `math.floor` | round toward negative infinity |
+| `math.ceil` | round toward positive infinity |
+| `math.round` | round to nearest integer |
+| `math.sin` `math.cos` `math.tan` | trigonometric functions |
+| `math.log` `math.log2` `math.log10` | logarithms |
 
 ### 12.9 Utility
 
-| Gate | Notes |
-|------|-------|
-| `cast(type)` | safe type cast |
-| `cast.unsafe(type)` | unsafe reinterpret cast |
-| `tee(fn)` | probe + side-route, pass through |
-| `tap(fn)` | alias for tee |
-| `id` | identity function — passes input through unchanged |
-| `const(v)` | discards input, emits constant v |
-| `assert(cond)` | halts with diagnostic if condition fails |
-| `unreachable` | marks a path as impossible; if reached, halts |
+| Function | Notes |
+|----------|-------|
+| `cast(type)` | safe widening cast |
+| `cast.unsafe(type)` | reinterpret-cast; no safety checks |
+| `tee(fn)` | side-route a copy to fn, pass original forward |
+| `id` | identity; passes input through unchanged |
+| `const(v)` | discard input; emit constant v |
+| `assert(cond)` | halt with diagnostic if cond is false |
+| `unreachable` | mark a code path as impossible; halts if reached |
 
 ---
 
 ## 13. Error Handling
 
-Dagger has no exceptions. Errors are types — a function that can fail returns an error type, and the caller must handle it explicitly.
+Dagger has no exceptions. Errors are values. A function that can fail declares its return type as `T!err`. The caller must explicitly handle or propagate the result.
 
-### 13.1 Error Type
+### 13.1 The Error Type
 
 ```dagger
 ~ result :: int!err    # either an int or an error
 ```
 
-The `!err` suffix marks a value as potentially an error.
+An `int!err` value is in exactly one of two states: success (holding an `int`) or error (holding an error message). You cannot read the `int` without first handling or propagating the error case.
 
-### 13.2 Producing Errors
+### 13.2 Typed Errors
+
+Errors carry a `text` tag identifying their kind. To distinguish error cases, produce errors with distinct tags and match on them in `fork`:
+
+```dagger
+@fn open_file [~ path :: text] => file!err [
+    path -> sys.stat -> fork [
+        ?= 0  -> @error("not_found")
+        _     ->
+            path -> sys.open -> fork [
+                ?< 0  -> @error("permission_denied")
+                _     -> path -> sys.open
+            ]
+    ]
+]
+```
+
+Matching on error tags:
+
+```dagger
+result -> fork [
+    @ok  -> [~ f]    [ f -> process ]
+    @err -> [~ e] [
+        e -> fork [
+            ?= "not_found"         -> "File does not exist" -> out.write_err
+            ?= "permission_denied" -> "Access denied"       -> out.write_err
+            _                      -> e -> out.write_err
+        ]
+    ]
+]
+```
+
+### 13.3 Producing Errors
 
 ```dagger
 @fn divide [~ a :: int, ~ b :: int] => int!err [
     b -> fork [
-        ?= 0  -> @error("division by zero")
+        ?= 0  -> @error("division_by_zero")
         _     -> a -> div(b)
     ]
 ]
 ```
 
-`@error(msg)` produces an error value with a text message.
+`@error("tag")` produces an error value with the given text tag. The tag is a plain `text` value.
 
-### 13.3 Handling Errors
+### 13.4 Handling Errors
 
 ```dagger
 ~ val = 10, 0 -> divide
@@ -863,31 +1029,28 @@ val -> fork [
 ]
 ```
 
-`@ok` matches the success arm, `@err` matches the error arm.
+`@ok` and `@err` are special `fork` arm conditions for `T!err` types. The bound value in the `@ok` arm has the unwrapped success type (`int` in this case). The bound value in the `@err` arm has type `text`.
 
-### 13.4 Propagating Errors
+### 13.5 Propagating Errors
+
+`@bubble` short-circuits: if the value on its left is an error, it immediately returns that error from the current function. If the value is `@ok`, routing continues with the unwrapped success value.
 
 ```dagger
-@fn safe_sqrt [~ n :: float] => float!err [
-    n -> fork [
-        ?< 0.0  -> @error("negative input")
-        _       -> n -> math.sqrt
-    ]
-]
-
 @fn compute [~ x :: float] => float!err [
-    x -> safe_sqrt -> @bubble    # @bubble propagates error upward if present
-    # if safe_sqrt succeeds, routing continues here
+    x -> safe_sqrt -> @bubble    # exits function with error if safe_sqrt failed
+    -> mul(2.0)                  # only reached on success; input is unwrapped float
 ]
 ```
 
-`@bubble` short-circuits: if the value is an error, it exits the current function with that error. If it is `@ok`, routing continues with the unwrapped value.
+The function's declared return type must be `T!err` for `@bubble` to be valid.
 
-### 13.5 Default on Error
+### 13.6 Default on Error
 
 ```dagger
-x -> safe_sqrt -> @or(0.0)    # use 0.0 if error
+x -> safe_sqrt -> @or(0.0)    # substitute 0.0 if safe_sqrt returned an error
 ```
+
+`@or(default)` unwraps a `T!err` value: returns the success value if `@ok`, or the given default if `@err`. The default must have the same type as the success type.
 
 ---
 
@@ -895,7 +1058,7 @@ x -> safe_sqrt -> @or(0.0)    # use 0.0 if error
 
 ### 14.1 File as Module
 
-Every `.dag` file is a module. Its name is its filename without the extension.
+Every `.dag` file is a module. Its module name is its filename without the extension. Directory paths become part of the name: `src/math/vec.dag` is the module `math.vec`.
 
 ```
 src/
@@ -910,22 +1073,22 @@ src/
 @use math
 @use io
 
-5 -> math.double -> io.out.write
+5 -> math.double -> out.write
 ```
 
-`@use` makes the module's exported functions and values available under its name.
+`@use` makes the module's exported functions and `@static` streams available under its name.
 
 ### 14.3 Selective Import
 
 ```dagger
 @use math [ double, square ]
 
-5 -> double -> out.write
+5 -> double -> out.write    # no math. prefix needed
 ```
 
 ### 14.4 Exporting
 
-By default, all top-level functions and `@static` values are exported. Prefix with `@private` to hide from importers:
+All top-level `@fn` declarations and `@static` streams are exported by default. Prefix with `@private` to exclude from the module's public interface:
 
 ```dagger
 @private @fn helper [~ n :: int] => int [
@@ -937,56 +1100,54 @@ By default, all top-level functions and `@static` values are exported. Prefix wi
 ]
 ```
 
-### 14.5 External (C ABI)
+### 14.5 External C Functions
 
 ```dagger
 @extern @fn printf [~ fmt :: &byte, ...] => int
-@extern @fn malloc [~ size :: uint] => &byte
+@extern @fn malloc [~ size :: uint]      => &byte
 ```
 
-`@extern` declares a function with C calling convention. Dagger will emit the correct `call` instruction and handle ABI-compliant argument passing.
+`@extern` declares a function with C calling convention. The compiler emits a standard `call` instruction and handles ABI-correct argument placement.
 
 ---
 
-## 15. Compile-time Functions (Macros)
+## 15. Compile-time Functions
 
-`@comptime` functions run entirely at compile time. Their output is substituted inline as a constant. They have access to type information and literal values only — no runtime state.
+`@comptime` marks a function that runs entirely at compile time. Its output is substituted as a constant wherever it is called. Compile-time functions may only operate on literals and compile-time constants — no runtime state.
 
 ```dagger
 @comptime @fn kilobytes [~ n :: int] => int [
     n -> mul(1024)
 ]
 
-~ buf :: block[@kilobytes(4)]    # compiles to block[4096]
+~ buf :: block[@kilobytes(4)]    # equivalent to block[4096]
 ```
 
-Compile-time functions are used for:
-- Constant folding
-- Computed buffer sizes
-- Conditional compilation
-- Code generation over types
+Compile-time functions are used for: computed buffer sizes, constant folding, and conditional compilation.
 
 ```dagger
-@comptime @fn is_64bit => bool [
+@comptime @fn is_x86_64 => bool [
     @arch -> eq("x86_64")
 ]
 ```
+
+`@arch` is a compile-time built-in that returns the target architecture string.
 
 ---
 
 ## 16. Assembly Mapping
 
-This section documents how every Dagger construct maps to x86-64 assembly. This is the contract — if the output deviates, it is a compiler bug.
+This section documents the exact x86-64 assembly emitted for each Dagger construct. If the compiler's output deviates from these mappings, it is a compiler bug.
 
-### 16.1 Stream to Register Mapping
+### 16.1 Register Assignment
 
-The compiler uses graph coloring to assign streams to registers. Priority order (callee-saved preferred for long-lived streams):
+The compiler uses graph coloring to assign streams to registers. Allocation order (callee-saved registers preferred for long-lived streams):
 
 ```
 rax rbx rcx rdx rsi rdi r8 r9 r10 r11 r12 r13 r14 r15
 ```
 
-Stack slots are used when register pressure exceeds available registers.
+Stack slots are used when register pressure exceeds available registers. `@pin` annotations override the allocator for a specific stream.
 
 ### 16.2 Arithmetic Routing
 
@@ -1007,6 +1168,7 @@ x -> double
 ```asm
 mov rdi, [x]    ; first argument
 call double
+; return value in rax
 ```
 
 ### 16.4 Fork
@@ -1045,22 +1207,22 @@ loop [?i < 10] [body]
 .loop_end:
 ```
 
-### 16.6 Block Entry/Exit
+### 16.6 Block Entry and Exit
 
 ```dagger
 block [
-    ~ x :: int = 5
+    ~ x   :: int      = 5
     ~ buf :: block[64]
 ]
 ```
 ```asm
-sub rsp, 72         ; 8 (int) + 64 (block)
+sub rsp, 72       ; 8 bytes (int x) + 64 bytes (buf)
 mov qword [rsp+64], 5
 ; body
 add rsp, 72
 ```
 
-### 16.7 @burst
+### 16.7 Explicit Free (@burst on heap value)
 
 ```dagger
 @burst heap_buf
@@ -1076,7 +1238,7 @@ call free
 @syscall write [~ fd :: int, ~ buf :: &byte, ~ len :: uint] => int
 ```
 
-Syscall functions emit direct `syscall` instructions with the correct register setup per the Linux x86-64 ABI (rax=syscall number, rdi, rsi, rdx, r10, r8, r9 for args).
+Syscall functions emit a `syscall` instruction with registers set per the Linux x86-64 ABI: `rax` = syscall number, `rdi rsi rdx r10 r8 r9` = arguments in order.
 
 ---
 
@@ -1093,20 +1255,23 @@ statement       ::= stream_decl
                   | block_stmt
 
 stream_decl     ::= "~" identifier ("::" type)? ("=" expression)?
-                  | "~" identifier ("," identifier)* ("::" type)? "=" expression ("," expression)*
+                  | "~" identifier ("," identifier)+ ("::" type)? "=" expression ("," expression)+
 
 route_stmt      ::= expression ("->" expression)+
 
-function_decl   ::= annotation* "@fn" identifier "[" param_list? "]" ("=>" type)? "block" "[" statement* "]"
+function_decl   ::= annotation* "@fn" identifier "[" param_list? "]" ("=>" type)? "[" statement* "]"
 
 type_decl       ::= "@type" identifier "[" field_list "]"
+                  | "@type" identifier "[" union_list "]"
 
-annotation      ::= "@" identifier
+annotation      ::= "@inline" | "@private" | "@comptime" | "@extern" | "@static"
 
 param_list      ::= param ("," param)*
 param           ::= "~" identifier "::" type
 
 field_list      ::= (identifier "::" type newline)*
+
+union_list      ::= ("|" type newline)+
 
 expression      ::= literal
                   | identifier
@@ -1120,32 +1285,43 @@ expression      ::= literal
                   | block_expr
                   | fork_expr
                   | loop_expr
+                  | each_expr
                   | "[" expression_list "]"
 
 function_call   ::= identifier "(" arg_list? ")"
 
-block_expr      ::= "block" ("[" param_list "]")? "[" statement* "]"
+block_expr      ::= "block" ("." identifier)?
+                    ("[" param_list "]")?
+                    "[" statement* "]"
 
 fork_expr       ::= "fork" "[" fork_arm+ "]"
-fork_arm        ::= (probe_cond | "_") "->" expression
 
-probe_cond      ::= "?" comparison_op literal
-                  | "?" identifier comparison_op expression
-                  | "@ok" | "@err"
+fork_arm        ::= fork_cond "->" (expression | block_expr)
 
-loop_expr      ::= "loop" "[" expression "]" "[" statement* "]"
-                  | "loop.range" "(" expression "," expression ")" "->" "[" "~" identifier "]" "[" statement* "]"
+fork_cond       ::= "?" comparison_op literal
+                  | "@ok"
+                  | "@err"
+                  | identifier           # union variant name
+                  | "_"
+
+loop_expr       ::= "loop" "[" expression "]" "[" statement* "]"
+                  | "loop.range" "(" expression "," expression ")"
+                    "->" "[" "~" identifier "]" "[" statement* "]"
+
+each_expr       ::= expression "->" "each" "->" "[" "~" identifier "]" "[" statement* "]"
 
 comparison_op   ::= "=" | "!=" | ">" | "<" | ">=" | "<="
 
 type            ::= primitive_type
                   | "block" "[" integer "]"
                   | "slice" "[" type "]"
-                  | "fn" "(" type "->" type ")"
+                  | "fn" "(" type_list "->" type ")"
                   | type "?"
                   | type "!" identifier
                   | "&" type
                   | identifier
+
+type_list       ::= type ("," type)*
 
 primitive_type  ::= "int" | "int8" | "int16" | "int32" | "int64"
                   | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
@@ -1155,40 +1331,52 @@ primitive_type  ::= "int" | "int8" | "int16" | "int32" | "int64"
 literal         ::= integer | float | string | char | "true" | "false" | "null"
 
 directive       ::= "@use" identifier ("[" identifier_list "]")?
-                  | "@extern" function_decl
-                  | "@static" stream_decl
                   | "@burst" identifier
                   | "@error" "(" string ")"
                   | "@bubble"
+                  | "@or" "(" expression ")"
                   | "@break"
                   | "@skip"
+                  | "@syscall" function_decl
+
+identifier_list ::= identifier ("," identifier)*
+
+expression_list ::= expression ("," expression)*
+
+arg_list        ::= expression ("," expression)*
 ```
 
 ---
 
 ## 18. Standard Library
 
-The Dagger standard library (`@use std`) is itself written in Dagger. There is no privileged runtime — `std` is just a collection of `.dag` files.
+The Dagger standard library (`@use std`) is written in Dagger. There is no privileged runtime — `std` is a collection of `.dag` files.
 
 ### 18.1 std.io
-I/O functions for files, stdin/stdout/stderr, formatting.
+
+I/O functions for files, stdin/stdout/stderr, and formatting.
 
 ### 18.2 std.mem
-Memory allocation, arena allocators, pool allocators.
+
+Memory allocation. The default allocator wraps `malloc`/`free`. Arenas and pool allocators are provided as alternatives.
 
 ```dagger
 @use std.mem
 
-~ arena = std.mem.arena(4096)               # create a 4KB arena
-~ buf = arena -> std.mem.arena.alloc(128)   # allocate from arena
-arena -> std.mem.arena.free                 # free entire arena at once
+~ arena = std.mem.arena(4096)              # create a 4 KB arena
+~ buf   = arena -> std.mem.arena.alloc(128) # allocate 128 bytes from arena
+arena -> std.mem.arena.free               # free entire arena at once
 ```
 
+To use a custom allocator as the default for `@heap` declarations, set `std.mem.default_allocator` at program start.
+
 ### 18.3 std.math
-Full math function library including trig, log, random.
+
+Full math library: trigonometry, logarithms, random number generation.
 
 ### 18.4 std.text
-Text manipulation: parsing, formatting, searching, encoding.
+
+Text manipulation: parsing, formatting, searching, encoding/decoding.
 
 ### 18.5 std.collections
 
@@ -1196,27 +1384,27 @@ Text manipulation: parsing, formatting, searching, encoding.
 @use std.collections
 
 ~ list :: std.collections.list[int]
-42 -> list -> std.collections.list.push
-list -> std.collections.list.len -> out.write
+42    -> list -> std.collections.list.push
+list  -> std.collections.list.len -> out.write
 ```
 
-Available collections: `list`, `map`, `set`, `queue`, `stack`, `ring`.
+Available: `list`, `map`, `set`, `queue`, `stack`, `ring`.
 
 ### 18.6 std.sys
-Direct system call functions. Platform-specific. Linux, macOS, Windows backends.
+
+Direct system call wrappers. Platform-specific backends for Linux, macOS, and Windows.
 
 ```dagger
 @use std.sys
-
 std.sys.exit(0)
 ```
 
 ### 18.7 std.fmt
-Formatting values to text.
+
+Format values into text.
 
 ```dagger
 @use std.fmt
-
 42, "the answer is {}" -> std.fmt.format -> out.write
 ```
 
@@ -1224,29 +1412,19 @@ Formatting values to text.
 
 ## 19. Compiler Pipeline
 
-The Dagger compiler (`dagc`) transforms `.dag` source to a native binary in five stages.
+The `dagc` compiler transforms `.dag` source into a native binary in six stages.
 
-### Stage 1: Lex
-Source text → token stream. Handles comments, literals, operators, identifiers.
+**Stage 1 — Lex:** source text → token stream. Handles comments, literals, operators, identifiers.
 
-### Stage 2: Parse
-Token stream → AST. Validates grammar per section 17. Produces a tree of routing nodes, block nodes, and function nodes.
+**Stage 2 — Parse:** token stream → AST. Validates grammar per Section 17. Produces a tree of routing nodes, block nodes, and function nodes.
 
-### Stage 3: Type Resolution
-AST → type-annotated AST. Infers types for all values and function outputs. Reports type mismatches. Resolves overloading if present.
+**Stage 3 — Type Resolution:** AST → type-annotated AST. Infers types per Section 6.4. Reports type mismatches. Resolves function overloads where applicable.
 
-### Stage 4: Value Lowering
-Type-annotated AST → lower-level IR. This IR is a flat, SSA-like representation where:
-- All values have explicit lifetimes
-- All block boundaries are explicit enter/exit ops
-- All routing chains are flattened to binary ops
-- @burst and lifetime-end points are inserted
+**Stage 4 — Value Lowering:** type-annotated AST → Stream IR (SIR). SIR is a flat SSA-like representation where all values have explicit lifetimes, all block boundaries are explicit enter/exit operations, all routing chains are flattened to binary operations, and all `@burst` and scope-exit free points are explicit.
 
-### Stage 5: Register Allocation
-SIR → Register-allocated IR. Graph coloring assigns streams to registers or stack slots. @pin annotations are enforced. Spill code inserted where needed.
+**Stage 5 — Register Allocation:** SIR → register-allocated IR. Graph coloring assigns streams to registers or stack slots. `@pin` annotations are enforced. Spill code is inserted where needed.
 
-### Stage 6: Code Generation
-Register-allocated IR → x86-64 assembly text (AT&T or Intel syntax, configurable). Then assembled via NASM/GAS or internal assembler to object file, then linked.
+**Stage 6 — Code Generation:** register-allocated IR → x86-64 assembly (AT&T or Intel syntax, configurable). Assembled via NASM/GAS or the internal assembler to an object file, then linked to produce the final binary.
 
 ### Compiler Flags
 
@@ -1254,13 +1432,13 @@ Register-allocated IR → x86-64 assembly text (AT&T or Intel syntax, configurab
 dagc [flags] <source files>
 
 -o <file>         output binary name (default: a.out)
--S                emit assembly only, do not assemble
--O0/O1/O2/O3      optimization level (default O2)
---syntax intel    emit Intel syntax assembly (default AT&T)
---no-stdlib       do not link standard library
+-S                emit assembly only, do not assemble or link
+-O0/O1/O2/O3      optimization level (default: O2)
+--syntax intel    emit Intel syntax assembly (default: AT&T)
+--no-stdlib       do not link the standard library
 --emit-sir        dump Stream IR before register allocation
 --verbose         print stage timings
---check           type check only, no output
+--check           type-check only; no output produced
 ```
 
 ---
@@ -1274,7 +1452,7 @@ dagc [flags] <source files>
 
 ~ i :: int = 1
 
-loop [?i <= 100] [
+loop [i -> lte(100)] [
     i -> fork [
         ?= 0 (i -> mod(15))  -> "FizzBuzz" -> out.writeln
         ?= 0 (i -> mod(3))   -> "Fizz"     -> out.writeln
@@ -1284,6 +1462,8 @@ loop [?i <= 100] [
     i -> add(1) -> i
 ]
 ```
+
+**Note on fork conditions with expressions:** when the condition operand is not a literal but a routed expression, wrap it in parentheses: `?= 0 (i -> mod(15))`. The parenthesised expression is evaluated first; its result is compared against the literal. This is the only context where a fork arm condition operand may be an expression rather than a literal.
 
 ### 20.2 Fibonacci
 
@@ -1322,7 +1502,7 @@ path -> file.open -> fork [
 ]
 ```
 
-### 20.4 Struct and Gate Composition
+### 20.4 Struct and Functions
 
 ```dagger
 # vec2.dag
@@ -1355,7 +1535,7 @@ a, b -> vec2.add -> vec2.length -> text.from -> out.writeln    # outputs 7.211..
 ~ buf :: block[64] @heap
 "hello from heap\n" -> buf[0]
 
-buf[0], 16 -> sys.write(1)    # fd=1 (stdout), buf, len
+buf[0], 16 -> sys.write(1)    # fd=1 (stdout)
 
 @burst buf
 std.sys.exit(0)
@@ -1368,62 +1548,66 @@ std.sys.exit(0)
 | Keyword | Meaning |
 |---------|---------|
 | `~` | Declare a stream |
-| `->` | Route data |
-| `=>` | Declare function output type |
-| `::` | Bind type to value |
-| `?` | Probe (non-consuming read) |
-| `!` | Burst (consuming read + free) |
+| `->` | Route data left to right |
+| `=>` | Declare function return type |
+| `::` | Annotate type |
+| `?x` | Probe stream x (non-consuming read) |
+| `!x` | Burst stream x (consuming read + free) |
+| `?= ?!= ?> ?< ?>= ?<=` | Fork arm conditions (only valid inside fork) |
 | `_` | Wildcard / discard |
+| `>>` | Compose two functions |
 | `@fn` | Declare a function |
-| `@type` | Declare a type |
+| `@type` | Declare a struct or union type |
 | `@burst` | Explicitly free a stream |
-| `@static` | Static lifetime stream |
-| `@pin` | Register pin annotation |
-| `@inline` | Inline a function at call sites |
-| `@extern` | External C ABI function |
-| `@comptime` | Compile-time function |
+| `@static` | Declare a program-lifetime stream |
+| `@inline` | Inline function at all call sites |
+| `@extern` | Declare an external C ABI function |
+| `@comptime` | Declare a compile-time function |
+| `@private` | Exclude from module exports |
 | `@use` | Import a module |
-| `@private` | Hide from module exports |
-| `@error` | Produce an error value |
-| `@bubble` | Propagate error upward |
-| `@ok` / `@err` | Fork arms for error types |
-| `@break` | Exit loop loop |
-| `@skip` | Advance to next iteration |
-| `@syscall` | Direct syscall function |
+| `@error(tag)` | Produce an error value with the given text tag |
+| `@bubble` | Propagate error from current routing position |
+| `@or(default)` | Unwrap success value or substitute default on error |
+| `@ok` / `@err` | Fork arm conditions for error types |
+| `@break` | Exit the enclosing loop or each |
+| `@skip` | Advance to the next iteration |
+| `@syscall` | Declare a direct syscall function |
 | `loop` | Loop construct |
+| `loop.range(a, b)` | Loop over integer range [a, b) |
 | `fork` | Branch construct |
-| `block` | Named scope block |
+| `block` | Explicit scope block |
 | `each` | Iterate a slice |
-| `tee` | Probe + side-route + pass-through |
-| `null` | Absence of value |
+| `tee` | Side-route a copy, pass original forward |
+| `null` | Absence of value (valid only in optional types) |
 | `true` / `false` | Boolean literals |
 
 ---
 
 ## Appendix B: Error Messages
 
-The Dagger compiler aims for clear, actionable error messages. Format:
+The compiler produces errors in the following format:
 
 ```
 [file]:[line]:[col] error: <message>
   <source line>
-  <caret pointing to problem>
+  <caret>
   hint: <suggestion>
 ```
 
 Example:
+
 ```
 main.dag:12:5 error: stream 'x' has been burst and cannot be probed
   x -> out.write
   ^
-  hint: remove the earlier @burst on line 8, or use a copy before bursting
+  hint: remove the @burst on line 8, or copy x before bursting
 ```
 
 ---
 
-## Appendix C: Reserved Future Syntax
+## Appendix C: Reserved Keywords
 
-The following operators and keywords are reserved for future versions and may not be used as identifiers:
+The following are reserved for future versions and may not be used as identifiers:
 
 ```
 async await spawn chan select
@@ -1434,5 +1618,4 @@ gpu kernel
 ---
 
 *Dagger language specification — version 0.1.0-draft*  
-*This document is intended as a seed spec for compiler implementation.*  
 *All syntax is subject to revision during implementation.*

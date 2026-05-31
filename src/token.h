@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <set>
 
 namespace dagger {
 
@@ -25,8 +26,19 @@ struct Token {
 };
 
 inline bool isKeyword(std::string_view text) {
-    return text == "true" || text == "false" || text == "null" || text == "loop" || text == "fork" ||
-           text == "field" || text == "block" || text == "loop.range";
+    static const std::set<std::string, std::less<>> keywords = {
+        "loop", "fork", "block", "each", "tee", "null", "true", "false"
+    };
+    return keywords.contains(std::string(text));
+}
+
+inline bool isDirective(std::string_view text) {
+    static const std::set<std::string, std::less<>> directives = {
+        "@fn", "@type", "@burst", "@static", "@extern", "@inline", 
+        "@comptime", "@private", "@use", "@syscall", "@error", 
+        "@bubble", "@or", "@ok", "@err", "@break", "@skip"
+    };
+    return directives.contains(std::string(text));
 }
 
 } // namespace dagger

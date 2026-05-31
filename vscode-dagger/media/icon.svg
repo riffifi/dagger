@@ -1,0 +1,9 @@
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="cut">
+      <rect width="32" height="32" fill="white"/>
+      <polygon points="4,5 20,16 4,27" fill="black"/>
+    </mask>
+  </defs>
+  <path d="M4,1 L14,1 Q31,1 31,16 Q31,31 14,31 L4,31 Z" fill="#6c63ff" mask="url(#cut)"/>
+</svg>

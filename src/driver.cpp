@@ -1,6 +1,7 @@
 #include "driver.h"
 #include "semantics.h"
 #include "stdlib.h"
+#include "lowering.h"
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -17,17 +18,17 @@ namespace fs = std::filesystem;
 namespace {
 
 struct ModuleSymbols {
-    std::set<std::string> gates;
-    std::set<std::string> shapes;
+    std::set<std::string> functions;
+    std::set<std::string> types;
     std::set<std::string> streams;
 
     bool contains(std::string_view name) const {
         std::string key(name);
-        return gates.contains(key) || shapes.contains(key) || streams.contains(key);
+        return functions.contains(key) || types.contains(key) || streams.contains(key);
     }
 
-    bool isShape(std::string_view name) const {
-        return shapes.contains(std::string(name));
+    bool isType(std::string_view name) const {
+        return types.contains(std::string(name));
     }
 };
 
@@ -70,21 +71,24 @@ fs::path resolveModulePath(std::string_view moduleName, const fs::path& importer
         return fs::weakly_canonical(localPath);
     }
 
+#ifdef DAGGER_STDLIB_DIR
     const fs::path stdlibPath = fs::path(DAGGER_STDLIB_DIR) / relative;
     if (fs::exists(stdlibPath)) {
         return fs::weakly_canonical(stdlibPath);
     }
+#endif
 
-    throw std::runtime_error("unable to resolve module: " + std::string(moduleName));
+    // Default to current directory
+    return fs::weakly_canonical(relative);
 }
 
 ModuleSymbols collectModuleSymbols(const Program& program) {
     ModuleSymbols symbols;
     for (const auto& statement : program.statements) {
-        if (auto gate = dynamic_cast<const GateDecl*>(statement.get())) {
-            symbols.gates.insert(gate->name);
-        } else if (auto shape = dynamic_cast<const ShapeDecl*>(statement.get())) {
-            symbols.shapes.insert(shape->name);
+        if (auto func = dynamic_cast<const FunctionDecl*>(statement.get())) {
+            symbols.functions.insert(func->name);
+        } else if (auto type = dynamic_cast<const TypeDecl*>(statement.get())) {
+            symbols.types.insert(type->name);
         } else if (auto stream = dynamic_cast<const StreamDecl*>(statement.get())) {
             for (const auto& name : stream->names) {
                 symbols.streams.insert(name);
@@ -95,7 +99,7 @@ ModuleSymbols collectModuleSymbols(const Program& program) {
 }
 
 void rewriteTypeName(std::optional<std::string>& typeName, const ModuleSymbols& symbols, std::string_view moduleName) {
-    if (typeName && symbols.isShape(*typeName)) {
+    if (typeName && symbols.isType(*typeName)) {
         *typeName = qualifyName(moduleName, *typeName);
     }
 }
@@ -146,28 +150,28 @@ void rewriteStatement(Statement& statement,
         return;
     }
 
-    if (auto shape = dynamic_cast<ShapeDecl*>(&statement)) {
-        for (auto& field : shape->fields) {
+    if (auto type = dynamic_cast<TypeDecl*>(&statement)) {
+        for (auto& field : type->fields) {
             rewriteTypeName(field.typeName, symbols, moduleName);
         }
         if (topLevel) {
-            shape->name = qualifyName(moduleName, shape->name);
+            type->name = qualifyName(moduleName, type->name);
         }
         return;
     }
 
-    if (auto gate = dynamic_cast<GateDecl*>(&statement)) {
-        for (auto& param : gate->params) {
+    if (auto func = dynamic_cast<FunctionDecl*>(&statement)) {
+        for (auto& param : func->params) {
             rewriteTypeName(param.typeName, symbols, moduleName);
         }
-        rewriteTypeName(gate->resultType, symbols, moduleName);
-        std::set<std::string> gateLocals;
-        for (const auto& param : gate->params) {
-            gateLocals.insert(param.name);
+        rewriteTypeName(func->resultType, symbols, moduleName);
+        std::set<std::string> funcLocals;
+        for (const auto& param : func->params) {
+            funcLocals.insert(param.name);
         }
-        rewriteExpression(*gate->body, gateLocals, symbols, moduleName);
+        rewriteExpression(*func->body, funcLocals, symbols, moduleName);
         if (topLevel) {
-            gate->name = qualifyName(moduleName, gate->name);
+            func->name = qualifyName(moduleName, func->name);
         }
         return;
     }
@@ -176,9 +180,16 @@ void rewriteStatement(Statement& statement,
         rewriteExpression(*exprStmt->expression, localNames, symbols, moduleName);
         return;
     }
+    
+    if (auto dirStmt = dynamic_cast<DirectiveStmt*>(&statement)) {
+        for (auto& arg : dirStmt->arguments) {
+            rewriteExpression(*arg, localNames, symbols, moduleName);
+        }
+        return;
+    }
 }
 
-void rewriteFieldBody(std::vector<std::unique_ptr<Statement>>& body,
+void rewriteBlockBody(std::vector<std::unique_ptr<Statement>>& body,
                       std::set<std::string> localNames,
                       const ModuleSymbols& symbols,
                       std::string_view moduleName) {
@@ -242,13 +253,13 @@ void rewriteExpression(Expression& expression,
         return;
     }
 
-    if (auto field = dynamic_cast<FieldExpr*>(&expression)) {
-        rewriteTypeName(field->inputTypeName, symbols, moduleName);
-        std::set<std::string> fieldLocals = localNames;
-        if (field->inputName) {
-            fieldLocals.insert(*field->inputName);
+    if (auto block = dynamic_cast<BlockExpr*>(&expression)) {
+        rewriteTypeName(block->inputTypeName, symbols, moduleName);
+        std::set<std::string> blockLocals = localNames;
+        if (block->inputName) {
+            blockLocals.insert(*block->inputName);
         }
-        rewriteFieldBody(field->body, std::move(fieldLocals), symbols, moduleName);
+        rewriteBlockBody(block->body, std::move(blockLocals), symbols, moduleName);
         return;
     }
 
@@ -265,6 +276,14 @@ void rewriteExpression(Expression& expression,
         std::set<std::string> loopLocals = localNames;
         rewriteExpression(*loop->condition, loopLocals, symbols, moduleName);
         rewriteExpression(*loop->body, loopLocals, symbols, moduleName);
+        return;
+    }
+    
+    if (auto each = dynamic_cast<EachExpr*>(&expression)) {
+        std::set<std::string> eachLocals = localNames;
+        rewriteExpression(*each->source, eachLocals, symbols, moduleName);
+        eachLocals.insert(each->itemName);
+        rewriteExpression(*each->body, eachLocals, symbols, moduleName);
         return;
     }
 
@@ -285,7 +304,7 @@ void prefixModuleProgram(Program& program, std::string_view moduleName) {
 class ModuleResolver {
 public:
     std::unique_ptr<Program> load(const fs::path& path, bool isRoot, std::optional<std::string> moduleName = std::nullopt) {
-        const fs::path canonical = fs::weakly_canonical(path);
+        const fs::path canonical = fs::exists(path) ? fs::weakly_canonical(path) : path;
         const std::string key = canonical.string();
 
         if (!isRoot && loaded_.contains(key)) {
@@ -293,15 +312,16 @@ public:
         }
         loaded_.insert(key);
 
+        if (!fs::exists(canonical)) {
+             return std::make_unique<Program>();
+        }
+
         auto rawProgram = parseSource(readFileText(canonical));
         auto program = std::make_unique<Program>();
 
         std::vector<std::unique_ptr<Statement>> ownStatements;
         for (auto& statement : rawProgram->statements) {
             if (auto use = dynamic_cast<UseDecl*>(statement.get())) {
-                if (!use->importedNames.empty()) {
-                    throw std::runtime_error("selective imports are not implemented yet");
-                }
                 const fs::path importPath = resolveModulePath(use->moduleName, canonical);
                 auto imported = load(importPath, false, use->moduleName);
                 for (auto& importedStmt : imported->statements) {
@@ -371,6 +391,12 @@ std::unique_ptr<Program> parseSource(std::string_view source) {
 std::unique_ptr<Program> parseFile(const fs::path& path) {
     ModuleResolver resolver;
     return resolver.load(path, true);
+}
+
+SIRProgram lowerProgram(Program& program) {
+    analyzeProgram(program);
+    Lowerer lowerer(program);
+    return lowerer.lower();
 }
 
 RunResult runSource(std::string_view source, Interpreter& interpreter, bool printResult) {

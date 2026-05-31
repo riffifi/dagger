@@ -12,6 +12,10 @@ add_library(dagger_lib
     src/runtime.cpp
     src/semantics.cpp
     src/stdlib.cpp
+    src/sir.cpp
+    src/lowering.cpp
+    src/regalloc.cpp
+    src/codegen.cpp
 )
 
 target_include_directories(dagger_lib PUBLIC src)

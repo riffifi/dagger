@@ -55,7 +55,7 @@ Notes:
 - [x] Variable declaration with inferred type/value
 - [x] Uninitialized stream declaration syntax
 - [x] Probe read syntax
-- [ ] Burst free semantics after `!x` use
+- [x] Burst free semantics after `!x` use
 - [x] Re-routing into an existing stream (`x -> ... -> x`)
 - [x] Multi-stream declaration (`~ a, b, c = ...`)
 - [ ] Register pinning (`@rax`, etc.)
@@ -118,10 +118,10 @@ Notes:
 
 ## 8. Memory Model
 
-- [ ] Stack allocation model
+- [x] Stack allocation model (represented in SIR)
 - [ ] Heap allocation annotations (`@heap`)
-- [ ] Explicit free with `@burst name`
-- [ ] Scope-exit cleanup analysis
+- [x] Explicit free with `!name` or scope exit (represented in SIR)
+- [x] Scope-exit cleanup analysis
 - [ ] Copy vs move semantics
 - [ ] References (`&x`)
 - [ ] Dereference function / `*ref`
@@ -274,8 +274,8 @@ Notes:
 
 - [x] Stage 1: Lex
 - [x] Stage 2: Parse
-- [ ] Stage 3: Type Resolution
-- [ ] Stage 4: Stream Lowering
+- [x] Stage 3: Type Resolution (Semantic Analysis)
+- [x] Stage 4: Stream Lowering (SIR)
 - [ ] Stage 5: Register Allocation
 - [ ] Stage 6: Code Generation
 - [ ] Compiler flags from spec
